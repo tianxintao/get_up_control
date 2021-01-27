@@ -18,7 +18,7 @@ from buffer import PGBuffer
 from collections import defaultdict
 
 from torch.utils.tensorboard import SummaryWriter
-from env import CustomMountainCarEnv
+from env import CustomMountainCarEnv, HumanoidStandup
 import argparse
 
 
