@@ -18,7 +18,7 @@ from buffer import PGBuffer
 from collections import defaultdict
 
 from torch.utils.tensorboard import SummaryWriter
-from env import CustomMountainCarEnv, HumanoidStandup
+from env import CustomMountainCarEnv, HumanoidStandupEnv
 import argparse
 
 
@@ -27,13 +27,13 @@ import argparse
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--env', type=str, default='LunarLander-v2', help='[CartPole-v0, LunarLander-v2, LunarLanderContinuous-v2, HalfCheetah-v3, others]')
-
+    parser.add_argument('--original', default=False, action='store_true', help='if set true, use the default power/strength parameters')
     parser.add_argument('--max_timesteps', type=int, default=5000000, help='Number of simulation steps to run')
     parser.add_argument('--test_interval', type=int, default=10000, help='Number of simulation steps between tests')
     parser.add_argument('--gamma', type=float, default=0.999, help='discount factor')
     parser.add_argument('--lam', type=float, default=0.98, help='GAE-lambda factor')
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--steps_per_epoch', type=int, default=400, help='Number of env steps to run during optimizations')
+    parser.add_argument('--steps_per_epoch', type=int, default=1000, help='Number of env steps to run during optimizations')
     parser.add_argument('--max_ep_len', type=int, default=1000)
 
     parser.add_argument('--train_pi_iters', type=int, default=4)
@@ -53,11 +53,12 @@ def main():
     parser.add_argument('--suffix', type=str, default='', help='Just for experiment logging (see utils)')
     parser.add_argument('--prefix', type=str, default='logs', help='Just for experiment logging (see utils)')
 
-    env = CustomMountainCarEnv()
-
     args = parser.parse_args()
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+
+    env = HumanoidStandupEnv(args.original)
+    env.render()
     env.seed(args.seed)
     obs_dim = env.observation_space.shape[0]
     if isinstance(env.action_space, Discrete):
@@ -77,9 +78,7 @@ def main():
 
     # Prepare for interaction with environment
     start_time = time.time()
-    max_speed = 0.175
-    power = 0.00375
-    o, ep_ret, ep_len = env.reset(max_speed_current=max_speed, power_current=power), 0, 0
+    o, ep_ret, ep_len = env.reset(), 0, 0
 
     ep_count = 0  # just for logging purpose, number of episodes run
     t = 0
@@ -121,7 +120,7 @@ def main():
 
             print("Total T: {t} Episode Num: {episode_num} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}"
                   .format(t=t, episode_num=ep_count, episode_timesteps=ep_len, episode_reward=ep_ret))
-            o, ep_ret, ep_len = env.reset(max_speed_current=max_speed, power_current=power), 0, 0
+            o, ep_ret, ep_len = env.reset(), 0, 0
 
             if epoch_ended:
                 policy.update(buf)
@@ -133,27 +132,24 @@ def main():
             #     print('Epoch', epoch, vals)
             #     logs = defaultdict(lambda: [])
         if t % args.test_interval == 0:
-            test_reward, video = run_tests(policy, max_speed, power, args, video_tag)
+            test_reward, video = run_tests(policy, env, args, video_tag)
             if len(video) != 0:
                 out = cv2.VideoWriter(os.path.join('video', 'power_{:.5f}_speed_{:.5f}.mp4'.format(power,max_speed)), cv2.VideoWriter_fourcc(*'MP4V'), 30, (600, 400))
                 for frame in video:
                     out.write(frame)
                 out.release()
             video_tag = False
-            if test_reward > 90:
-                max_speed = max(0.07, max_speed * 0.98)
-                power = max(0.0015, power * 0.98)
-                video_tag = True
-                print("Current power: {}, Current max speed: {}".format(power, max_speed))
+            env.adjust_power(test_reward)
 
 
-def run_tests(policy, max_speed, power, args, video_tag):
-    test_env = CustomMountainCarEnv()
+def run_tests(policy, train_env, args, video_tag):
+    test_env = HumanoidStandupEnv(args.original)
     test_env.seed(args.seed + 77)
+    test_env.set_power(train_env.export_power())
     avg_reward = 0
     video = []
     for i in range(10):
-        state, done = test_env.reset(max_speed_current=max_speed, power_current=power), False
+        state, done = test_env.reset(), False
         while not done:
             action = policy.act(torch.as_tensor(state, dtype=torch.float32).to(args.device))
             if i==0 and video_tag:

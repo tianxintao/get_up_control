@@ -2,25 +2,55 @@ from gym.envs.classic_control.continuous_mountain_car import Continuous_Mountain
 from gym.utils import seeding
 from pybullet_envs.gym_locomotion_envs import WalkerBaseBulletEnv
 from pybullet_envs.robot_locomotors import WalkerBase
+from pybullet_envs.scene_stadium import SinglePlayerStadiumScene
+from pybullet_utils import bullet_client
+import os
 
 import numpy as np
 import math
+import pybullet
+import pybullet_data
 
 class CustomMountainCarEnv(Continuous_MountainCarEnv):
     # By default,
-    # self.max_speed = 0.07
-    # self.power = 0.0015
-    def __init__(self):
+    max_speed_default = 0.07
+    power_default = 0.0015
+
+    def __init__(self, original):
         super().__init__()
         self.time_limit = 400
+        self.original = original
+        if self.original:
+            self.max_speed = self.max_speed_default
+            self.power = self.power_default
+        else:
+            self.max_speed = 0.175
+            self.power = 0.00375
 
-    def reset(self, max_speed_current=None, power_current=None):
+    def reset(self):
         self.state = np.array([self.np_random.uniform(low=-0.6, high=-0.4), 0])
-        if max_speed_current: self.max_speed = max_speed_current
-        if power_current: self.power = power_current
+        # if max_speed_current: self.max_speed = max_speed_current
+        # if power_current: self.power = power_current
         self.step_count = 0
         self.terminal_signal = False
         return np.array(self.state)
+
+    def adjust_power(self, test_reward):
+        if self.original:
+            return
+        if test_reward > 90:
+            self.max_speed = max(0.98 * self.max_speed, self.max_speed_default)
+            self.power = max(0.98 * self.power, self.power_default)
+
+    def export_power(self):
+        return {
+            "max_speed": self.max_speed,
+            "power": self.power
+        }
+
+    def set_power(self, power_dict):
+        self.max_speed = power_dict["max_speed"]
+        self.power = power_dict["power"]
 
     def step(self, action, exclude_energy=False):
 
@@ -59,27 +89,28 @@ class CustomMountainCarEnv(Continuous_MountainCarEnv):
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
-        self.action_space.seed(seed) # Action space is not seeded by default
+        self.action_space.seed(seed)  # Action space is not seeded by default
         return [seed]
+
 
 class HumanoidStandup(WalkerBase):
     self_collision = True
-    foot_list = ["right_foot", "left_foot","left_lower_arm", "right_lower_arm"]  #
+    foot_list = ["right_foot", "left_foot", "left_lower_arm", "right_lower_arm"]
 
     def __init__(self):
         WalkerBase.__init__(self,
                             'humanoid_symmetric.xml',
                             'torso',
                             action_dim=17,
-                            obs_dim=43,
-                            power=0.4)
+                            obs_dim=44,
+                            power=0.8)
         self.model_xml = "humanoid_standup.xml"
         # 17 joints, 4 of them important for walking (hip, knee), others may as well be turned off, 17/4 = 4.25
 
-    def reset(self, bullet_client):
-        self._p = bullet_client
-        self._p.setAdditionalSearchPath('./')
-        WalkerBase.reset(self,bullet_client)
+    # def reset(self, bullet_client):
+    #     self._p = bullet_client
+    #     self._p.setAdditionalSearchPath('./')
+    #     WalkerBase.reset(self, bullet_client)
 
     def robot_specific_reset(self, bullet_client):
         WalkerBase.robot_specific_reset(self, bullet_client)
@@ -126,23 +157,22 @@ class HumanoidStandup(WalkerBase):
                          )  # torso z is more informative than mean z
         self.body_real_xyz = body_pose.xyz()
         quat = self.robot_body.current_orientation()
-        z = self.body_xyz[2]
+        z_body = self.body_xyz[2]
+        self.z_head = self.parts['head'].pose().xyz()[2]
         if self.initial_z == None:
-            self.initial_z = z
-
-        more = np.array([z,quat[0],quat[1],quat[2],quat[3]],dtype=np.float32)
+            self.initial_z = z_body
+        # print(z_body, self.z_head)
+        more = np.array([z_body, self.z_head, quat[0], quat[1], quat[2], quat[3]], dtype=np.float32)
         return np.clip(np.concatenate([more] + [j] + [self.feet_contact]), -5, +5)
 
 
-class HumanoidBulletEnv(WalkerBaseBulletEnv):
+class HumanoidStandupEnv(WalkerBaseBulletEnv):
 
-    def __init__(self, robot=None, render=False):
-        if robot is None:
-            self.robot = HumanoidStandup()
-        else:
-            self.robot = robot
+    def __init__(self, original, render=False):
+        self.robot = HumanoidStandup()
         WalkerBaseBulletEnv.__init__(self, self.robot, render)
-
+        self.original = original
+        self.first_reset = True
 
     def step(self, a):
         self._step_count += 1
@@ -178,12 +208,93 @@ class HumanoidBulletEnv(WalkerBaseBulletEnv):
         #
         # joints_at_limit_cost = float(self.joints_at_limit_cost * self.robot.joints_at_limit)
         self.rewards = [
-            self.robot.body_xyz[2]
+            self.robot.z_head
         ]
         self.HUD(state, a, done)
-        self.reward += sum(self.rewards)
-
+        # self.reward += sum(self.rewards)
+        return state, sum(self.rewards), done, None
 
     def reset(self):
-        WalkerBaseBulletEnv.reset(self)
+        if (self.stateId >= 0):
+            self._p.restoreState(self.stateId)
+
+        if self.first_reset:
+
+            if self.isRender:
+                self._p = bullet_client.BulletClient(connection_mode=pybullet.GUI)
+            else:
+                self._p = bullet_client.BulletClient()
+            self._p.resetSimulation()
+            self._p.setPhysicsEngineParameter(deterministicOverlappingPairs=1)
+
+            try:
+                if os.environ["PYBULLET_EGL"]:
+                    con_mode = self._p.getConnectionInfo()['connectionMethod']
+                    if con_mode == self._p.DIRECT:
+                        import pkgutil
+
+                        egl = pkgutil.get_loader('eglRenderer')
+                        if (egl):
+                            self._p.loadPlugin(egl.get_filename(), "_eglRendererPlugin")
+                        else:
+                            self._p.loadPlugin("eglRendererPlugin")
+            except:
+                pass
+
+            self.physicsClientId = self._p._client
+            self._p.configureDebugVisualizer(pybullet.COV_ENABLE_GUI, 0)
+
+            self.first_reset = False
+            self.scene = SinglePlayerStadiumScene(
+                self._p, gravity=9.8,
+                timestep=(1/60) / 1 / 20,
+                frame_skip=20
+            )
+            self.scene.cpp_world.clean_everything()
+
+            filename = os.path.join(pybullet_data.getDataPath(), "plane_stadium.sdf")
+            self.ground_plane_mjcf = self._p.loadSDF(filename)
+
+            for i in self.ground_plane_mjcf:
+                self._p.changeDynamics(i, -1, lateralFriction=0.8, restitution=0.5)
+                self._p.changeVisualShape(i, -1, rgbaColor=[1, 1, 1, 0.8])
+                self._p.configureDebugVisualizer(pybullet.COV_ENABLE_PLANAR_REFLECTION, i)
+
+        self.robot.scene = self.scene
+        self.frame = 0
+        self.done = 0
+        self.reward = 0
+        s = self.robot.reset(self._p)
+        self.potential = self.robot.calc_potential()
+
+        self.parts, self.jdict, self.ordered_joints, self.robot_body = self.robot.addToScene(
+            self._p, self.ground_plane_mjcf)
+
+        self.ground_ids = set([(self.parts[f].bodies[self.parts[f].bodyIndex],
+                                self.parts[f].bodyPartIndex) for f in self.foot_ground_object_names])
+        self._p.configureDebugVisualizer(pybullet.COV_ENABLE_RENDERING, int(self.isRender))
+        if (self.stateId < 0):
+            self.stateId = self._p.saveState()
+
         self._step_count = 0
+        self.terminal_signal = False
+        return s
+
+    def adjust_power(self, test_reward):
+        return
+
+    def export_power(self):
+        return {
+            "power": self.robot.power
+        }
+
+    def set_power(self, power_dict):
+        self.robot.power = power_dict["power"]
+
+    def seed(self, seed=None):
+        self.robot.np_random, seed = seeding.np_random(seed)
+        try:
+            self.action_space.seed(seed)  # Action space is not seeded by default
+        except:
+            return [seed]
+        return [seed]
