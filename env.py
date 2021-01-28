@@ -79,7 +79,7 @@ class CustomMountainCarEnv(Continuous_MountainCarEnv):
             reward = 100.0
 
         if not exclude_energy:
-            reward -= math.pow(action[0], 2) * 0.1
+            reward -= math.pow(action[0] * (self.power/0.0015), 2) * 0.1 * ((0.0015/self.power) ** 2)
         else:
             reward -= 0.05
 

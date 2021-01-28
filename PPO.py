@@ -120,7 +120,7 @@ class PPO(nn.Module):
 
     def act(self, obs):
         pi, _ = self.pi(obs)
-        return pi.mean.detach().numpy()
+        return pi.mean.cpu().detach().numpy()
 
     # Set up update function
     def update(self, buf):

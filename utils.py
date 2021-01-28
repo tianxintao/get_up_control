@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 import scipy.signal
+import os
+import logging
 
 class PGBuffer:
     """
@@ -9,7 +11,7 @@ class PGBuffer:
     row our policy so we can batch process them more efficiently and take better gradient steps.
     """
 
-    def __init__(self, obs_dim, act_dim, discrete, size, args):
+    def __init__(self, obs_dim, act_dim, discrete, size, args, device):
         self.obs_buf = np.zeros((size, obs_dim), dtype=np.float32)
         if discrete:
             self.act_buf = np.zeros((size,), dtype=np.float32)
@@ -23,7 +25,7 @@ class PGBuffer:
         self.gamma, self.lam = args.gamma, args.lam
         self.psi_mode = args.psi_mode
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
-        self.device = args.device
+        self.device = device
 
     def store(self, obs, act, rew, val, logp):
         """
@@ -98,3 +100,22 @@ def discount_cumsum(x, discount):
          x2]
     """
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
+
+
+def make_dir(dir_path):
+    try:
+        os.mkdir(dir_path)
+    except OSError:
+        pass
+    return dir_path
+
+
+def create_logger(output_path):
+    logger = logging.getLogger()
+    logger_name = os.path.join(output_path, 'session.log')
+    file_handler = logging.FileHandler(logger_name)
+    console_handler = logging.StreamHandler()
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    logger.setLevel(os.environ.get("LOGLEVEL", "INFO"))
+    return logger
