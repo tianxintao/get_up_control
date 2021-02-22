@@ -1,15 +1,11 @@
 from gym.envs.classic_control.continuous_mountain_car import Continuous_MountainCarEnv
 from gym.utils import seeding
-from pybullet_envs.gym_locomotion_envs import WalkerBaseBulletEnv
-from pybullet_envs.robot_locomotors import WalkerBase
-from pybullet_envs.scene_stadium import SinglePlayerStadiumScene
-from pybullet_utils import bullet_client
+from dm_control import suite
+from dm_control.suite.base import Task
+from dm_control.utils import rewards
 import os
-
 import numpy as np
 import math
-import pybullet
-import pybullet_data
 
 class CustomMountainCarEnv(Continuous_MountainCarEnv):
     # By default,
@@ -93,208 +89,110 @@ class CustomMountainCarEnv(Continuous_MountainCarEnv):
         return [seed]
 
 
-class HumanoidStandup(WalkerBase):
-    self_collision = True
-    foot_list = ["right_foot", "left_foot", "left_lower_arm", "right_lower_arm"]
+class HumanoidStandupEnv():
+    _STAND_HEIGHT = 1.59
 
-    def __init__(self):
-        WalkerBase.__init__(self,
-                            'humanoid_symmetric.xml',
-                            'torso',
-                            action_dim=17,
-                            obs_dim=44,
-                            power=0.8)
-        self.model_xml = "humanoid_standup.xml"
-        # 17 joints, 4 of them important for walking (hip, knee), others may as well be turned off, 17/4 = 4.25
-
-    # def reset(self, bullet_client):
-    #     self._p = bullet_client
-    #     self._p.setAdditionalSearchPath('./')
-    #     WalkerBase.reset(self, bullet_client)
-
-    def robot_specific_reset(self, bullet_client):
-        WalkerBase.robot_specific_reset(self, bullet_client)
-        self.motor_names = ["abdomen_z", "abdomen_y", "abdomen_x"]
-        self.motor_power = [100, 100, 100]
-        self.motor_names += ["right_hip_x", "right_hip_z", "right_hip_y", "right_knee"]
-        self.motor_power += [100, 100, 300, 200]
-        self.motor_names += ["left_hip_x", "left_hip_z", "left_hip_y", "left_knee"]
-        self.motor_power += [100, 100, 300, 200]
-        self.motor_names += ["right_shoulder1", "right_shoulder2", "right_elbow"]
-        self.motor_power += [25, 25, 25]
-        self.motor_names += ["left_shoulder1", "left_shoulder2", "left_elbow"]
-        self.motor_power += [25, 25, 25]
-        self.motors = [self.jdict[n] for n in self.motor_names]
-
-        self.robot_body.reset_position([0, 0, 0.15])
-        self.robot_body.reset_orientation([0, 0, 0, 1])
-        self.initial_z = 0.15
-
-    random_yaw = False
-    random_lean = False
-
-    def apply_action(self, a):
-        assert (np.isfinite(a).all())
-        for i, m, power in zip(range(17), self.motors, self.motor_power):
-            m.set_motor_torque(float(power * self.power * np.clip(a[i], -1, +1)))
-
-    def alive_bonus(self, z, pitch):
-        return +1
-
-    def calc_potential(self):
-        return 0
-
-    def calc_state(self):
-        j = np.array([j.current_relative_position() for j in self.ordered_joints],
-                     dtype=np.float32).flatten()
-        # even elements [0::2] position, scaled to -1..+1 between limits
-        # odd elements  [1::2] angular speed, scaled to show -1..+1
-        self.joint_speeds = j[1::2]
-
-        body_pose = self.robot_body.pose()
-        parts_xyz = np.array([p.pose().xyz() for p in self.parts.values()]).flatten()
-        self.body_xyz = (parts_xyz[0::3].mean(), parts_xyz[1::3].mean(), body_pose.xyz()[2]
-                         )  # torso z is more informative than mean z
-        self.body_real_xyz = body_pose.xyz()
-        quat = self.robot_body.current_orientation()
-        z_body = self.body_xyz[2]
-        self.z_head = self.parts['head'].pose().xyz()[2]
-        if self.initial_z == None:
-            self.initial_z = z_body
-        # print(z_body, self.z_head)
-        more = np.array([z_body, self.z_head, quat[0], quat[1], quat[2], quat[3]], dtype=np.float32)
-        return np.clip(np.concatenate([more] + [j] + [self.feet_contact]), -5, +5)
-
-
-class HumanoidStandupEnv(WalkerBaseBulletEnv):
-
-    def __init__(self, original, render=False):
-        self.robot = HumanoidStandup()
-        WalkerBaseBulletEnv.__init__(self, self.robot, render)
+    def __init__(self, original, power=0.9, seed=0, custom_reset=False, power_end=0.35):
+        self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random':seed})
+        self.env._flat_observation = True
+        self.physics = self.env.physics
+        self.custom_reset = custom_reset
+        self.power_end=power_end
+        self.power_base = power
+        self.reset()
+        self.action_space = self.env.action_spec()
+        self.obs_shape = self._state.shape
         self.original = original
-        self.first_reset = True
-
+        
     def step(self, a):
-        self._step_count += 1
-        self.robot.apply_action(a)
-        self.scene.global_step()
+        self._step_num += 1
+        self.timestep = self.env.step(a)
+        self.obs = self.timestep.observation
+        return self._state, self._reward, self._done, self.timestep
 
-        state = self.robot.calc_state()  # also calculates self.joints_at_limit
-
-        done = self._step_count >= 1000
-        if not np.isfinite(state).all():
-            print("~INF~", state)
-            done = True
-
-        # potential_old = self.potential
-        # self.potential = self.robot.calc_potential()
-        # progress = float(self.potential - potential_old)
-
-        for i, f in enumerate(
-                self.robot.feet
-        ):  # TODO: Maybe calculating feet contacts could be done within the robot code
-            contact_ids = set((x[2], x[4]) for x in f.contact_list())
-            # print("CONTACT OF '%d' WITH %d" % (contact_ids, ",".join(contact_names)) )
-            if (self.ground_ids & contact_ids):
-                # see Issue 63: https://github.com/openai/roboschool/issues/63
-                # feet_collision_cost += self.foot_collision_cost
-                self.robot.feet_contact[i] = 1.0
-            else:
-                self.robot.feet_contact[i] = 0.0
-
-        # electricity_cost = self.electricity_cost * float(np.abs(a * self.robot.joint_speeds).mean(
-        # ))  # let's assume we have DC motor with controller, and reverse current braking
-        # electricity_cost += self.stall_torque_cost * float(np.square(a).mean())
-        #
-        # joints_at_limit_cost = float(self.joints_at_limit_cost * self.robot.joints_at_limit)
-        self.rewards = [
-            self.robot.z_head
-        ]
-        self.HUD(state, a, done)
-        # self.reward += sum(self.rewards)
-        return state, sum(self.rewards), done, None
-
-    def reset(self):
-        if (self.stateId >= 0):
-            self._p.restoreState(self.stateId)
-
-        if self.first_reset:
-
-            if self.isRender:
-                self._p = bullet_client.BulletClient(connection_mode=pybullet.GUI)
-            else:
-                self._p = bullet_client.BulletClient()
-            self._p.resetSimulation()
-            self._p.setPhysicsEngineParameter(deterministicOverlappingPairs=1)
-
-            try:
-                if os.environ["PYBULLET_EGL"]:
-                    con_mode = self._p.getConnectionInfo()['connectionMethod']
-                    if con_mode == self._p.DIRECT:
-                        import pkgutil
-
-                        egl = pkgutil.get_loader('eglRenderer')
-                        if (egl):
-                            self._p.loadPlugin(egl.get_filename(), "_eglRendererPlugin")
-                        else:
-                            self._p.loadPlugin("eglRendererPlugin")
-            except:
-                pass
-
-            self.physicsClientId = self._p._client
-            self._p.configureDebugVisualizer(pybullet.COV_ENABLE_GUI, 0)
-
-            self.first_reset = False
-            self.scene = SinglePlayerStadiumScene(
-                self._p, gravity=9.8,
-                timestep=(1/60) / 1 / 20,
-                frame_skip=20
-            )
-            self.scene.cpp_world.clean_everything()
-
-            filename = os.path.join(pybullet_data.getDataPath(), "plane_stadium.sdf")
-            self.ground_plane_mjcf = self._p.loadSDF(filename)
-
-            for i in self.ground_plane_mjcf:
-                self._p.changeDynamics(i, -1, lateralFriction=0.8, restitution=0.5)
-                self._p.changeVisualShape(i, -1, rgbaColor=[1, 1, 1, 0.8])
-                self._p.configureDebugVisualizer(pybullet.COV_ENABLE_PLANAR_REFLECTION, i)
-
-        self.robot.scene = self.scene
-        self.frame = 0
-        self.done = 0
-        self.reward = 0
-        s = self.robot.reset(self._p)
-        self.potential = self.robot.calc_potential()
-
-        self.parts, self.jdict, self.ordered_joints, self.robot_body = self.robot.addToScene(
-            self._p, self.ground_plane_mjcf)
-
-        self.ground_ids = set([(self.parts[f].bodies[self.parts[f].bodyIndex],
-                                self.parts[f].bodyPartIndex) for f in self.foot_ground_object_names])
-        self._p.configureDebugVisualizer(pybullet.COV_ENABLE_RENDERING, int(self.isRender))
-        if (self.stateId < 0):
-            self.stateId = self._p.saveState()
-
-        self._step_count = 0
+    def reset(self, test_time=False):
+        if self.custom_reset:
+            # while True:
+            #     self.physics.after_reset()
+            #     if self.physics.data.ncon <= 0: break
+            # self.physics(self, self.physics)
+            repeat = True
+            while repeat:
+                self.env.reset()
+                with self.physics.reset_context():
+                    self.physics.named.data.qpos[:3] = [0,0,0.5]
+                    self.physics.named.data.qpos[3:7] = [0.707,0,-1,0]
+                    self.physics.after_reset()
+                if self.physics.data.ncon == 0: repeat=False
+        else:
+            self.timestep = self.env.reset()
+        # with self.env.physics.reset_context():
+        #     # Add custom reset
+        self.obs = self.env._task.get_observation(self.env._physics)
+        self._step_num = 0
         self.terminal_signal = False
-        return s
+        if not test_time: self.sample_power()
+        return self._state
+    
+    def render(self, mode=None):
+        return self.env.physics.render(height=128, width=128, camera_id = 0)
+
+    def sample_power(self, std=0.02):
+        if np.abs(self.power_base - self.power_end) <= 1e-3:
+            self.power = self.power_base
+            return
+        self.power = np.clip(self.power_base + np.random.randn() * std, self.power_end, 1)
 
     def adjust_power(self, test_reward):
-        return
+        if self.original or np.abs(self.power_base - self.power_end) <= 1e-3:
+            return False
+        if test_reward > 180:
+            self.power_base = max(0.95 * self.power_base, self.power_end)
+        return np.abs(self.power_base - self.power_end) <= 1e-3
 
     def export_power(self):
         return {
-            "power": self.robot.power
+            "power": self.power_base
         }
 
     def set_power(self, power_dict):
-        self.robot.power = power_dict["power"]
+        self.power = power_dict["power"]
+    
+    @property
+    def _state(self):
+        _state = []
+        for part in self.obs.values():
+            _state.append(part if not np.isscalar(part) else [part])
+        _state.append([self.power])
+        return np.concatenate(_state)
 
-    def seed(self, seed=None):
-        self.robot.np_random, seed = seeding.np_random(seed)
-        try:
-            self.action_space.seed(seed)  # Action space is not seeded by default
-        except:
-            return [seed]
-        return [seed]
+    @property
+    def _done(self):
+        if self._step_num >= 1000:
+            return True
+        return self.timestep.last()
+
+    @property
+    def _reward(self):
+        standing = rewards.tolerance(self.physics.head_height(),
+                                 bounds=(self._STAND_HEIGHT, float('inf')),
+                                 margin=self._STAND_HEIGHT/4)
+        upright = rewards.tolerance(self.physics.torso_upright(),
+                                bounds=(0.9, float('inf')), sigmoid='linear',
+                                margin=1.9, value_at_margin=0)
+        
+        small_control = rewards.tolerance(self.physics.control(), margin=1,
+                                      value_at_margin=0,
+                                      sigmoid='quadratic').mean()
+        small_control = (4 + small_control) / 5
+
+        horizontal_velocity = self.physics.center_of_mass_velocity()[[0, 1]]
+        dont_move = rewards.tolerance(horizontal_velocity, bounds=[-0.3,0.3], margin=1.2).mean()
+
+        # joint_limit = self.physics.model.jnt_range[1:]
+        # joint_angle = self.physics.data.qpos[7:].copy()
+        # dif = 0.01 * (joint_limit[:,1] - joint_limit[:,0])
+        # between_limit = np.logical_and(joint_angle>joint_limit[:,0] + dif, joint_angle<joint_limit[:,1] - dif)
+        # joint_limit_cost = np.where(between_limit, 1, 0).mean()
+
+        return standing*upright*small_control*dont_move
