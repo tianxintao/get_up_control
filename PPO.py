@@ -88,8 +88,8 @@ class PPO(nn.Module):
             lr_pi=3e-4,
             lr_v = 1e-3,
             clip_ratio=0.2,
-            train_pi_iters=4,
-            train_v_iters=40
+            train_pi_iters=20,
+            train_v_iters=20
     ):
         super().__init__()
         # bulid actor networt
@@ -118,7 +118,7 @@ class PPO(nn.Module):
             v = self.v(obs)
         return a.cpu().numpy(), v.cpu().numpy(), logp_a.cpu().numpy()
 
-    def act(self, obs):
+    def select_action(self,obs):
         pi, _ = self.pi(obs)
         return pi.mean.cpu().detach().numpy()
 

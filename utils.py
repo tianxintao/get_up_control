@@ -4,6 +4,69 @@ import scipy.signal
 import os
 import logging
 
+class ReplayBuffer(object):
+    def __init__(self, state_dim, action_dim, max_size=int(1e6)):
+        self.max_size = max_size
+        self.ptr = 0
+        self.size = 0
+
+        self.state = np.zeros((max_size, state_dim))
+        self.action = np.zeros((max_size, action_dim))
+        self.next_state = np.zeros((max_size, state_dim))
+        self.reward = np.zeros((max_size, 1))
+        self.not_done = np.zeros((max_size, 1))
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def add(self, state, action, next_state, reward, done):
+        self.state[self.ptr] = state
+        self.action[self.ptr] = action
+        self.next_state[self.ptr] = next_state
+        self.reward[self.ptr] = reward
+        self.not_done[self.ptr] = 1. - done
+
+        self.ptr = (self.ptr + 1) % self.max_size
+        self.size = min(self.size + 1, self.max_size)
+
+    def sample(self, batch_size, curriculum):
+        # if curriculum:
+        #     ind = np.random.randint(self.ptr - 200000, self.ptr, size=batch_size)
+        # else:
+        #     ind = np.random.randint(0, self.size, size=batch_size)
+
+        ind = np.random.randint(0, self.size, size=batch_size)
+
+        return (
+            torch.FloatTensor(self.state[ind]).to(self.device),
+            torch.FloatTensor(self.action[ind]).to(self.device),
+            torch.FloatTensor(self.next_state[ind]).to(self.device),
+            torch.FloatTensor(self.reward[ind]).to(self.device),
+            torch.FloatTensor(self.not_done[ind]).to(self.device)
+        )
+    
+    def save(self, filename):
+        data = {
+            'state': self.state,
+            'action': self.action,
+            'next_state': self.next_state,
+            'reward': self.reward,
+            'not_done': self.not_done,
+            'ptr': self.ptr,
+            'size': self.size
+        }
+        np.savez(filename,**data)
+
+    def load(self, filename):
+        # with np.load(filename) as data:
+        data = np.load(filename)
+        self.state = data['state']
+        self.action = data['action']
+        self.next_state = data['next_state']
+        self.not_done = data['not_done']
+        self.ptr = data['ptr']
+        self.size = data['size']
+        
+
 class PGBuffer:
     """
     A buffer for storing trajectories experienced by a Policy Gradient agent interacting
@@ -112,6 +175,7 @@ def make_dir(dir_path):
 
 def create_logger(output_path):
     logger = logging.getLogger()
+    logger.handlers.clear()
     logger_name = os.path.join(output_path, 'session.log')
     file_handler = logging.FileHandler(logger_name)
     console_handler = logging.StreamHandler()
