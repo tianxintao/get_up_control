@@ -159,7 +159,7 @@ class HumanoidStandupEnv():
 
     def set_power(self, power_dict):
         self.power = power_dict["power"]
-
+        
     @property
     def _state(self):
         _state = []
