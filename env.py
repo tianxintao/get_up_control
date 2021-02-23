@@ -95,7 +95,11 @@ class HumanoidStandupEnv():
     _STAND_HEIGHT = 1.55
 
     def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.35):
+<<<<<<< HEAD
         self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random': seed})
+=======
+        self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random':seed})
+>>>>>>> update
         self.env._flat_observation = True
         self.physics = self.env.physics
         self.custom_reset = custom_reset
