@@ -92,7 +92,11 @@ class CustomMountainCarEnv(Continuous_MountainCarEnv):
 class HumanoidStandupEnv():
     _STAND_HEIGHT = 1.59
 
+<<<<<<< HEAD
     def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.35):
+=======
+    def __init__(self, original, power=0.9, seed=0, custom_reset=False, power_end=0.35):
+>>>>>>> 26416994e635ff5a94ae3e784f9c390b7f3b6544
         self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random':seed})
         self.env._flat_observation = True
         self.physics = self.env.physics
