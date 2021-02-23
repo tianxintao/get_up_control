@@ -92,21 +92,17 @@ class CustomMountainCarEnv(Continuous_MountainCarEnv):
 class HumanoidStandupEnv():
     _STAND_HEIGHT = 1.59
 
-<<<<<<< HEAD
     def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.35):
-=======
-    def __init__(self, original, power=0.9, seed=0, custom_reset=False, power_end=0.35):
->>>>>>> 26416994e635ff5a94ae3e784f9c390b7f3b6544
         self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random':seed})
         self.env._flat_observation = True
         self.physics = self.env.physics
         self.custom_reset = custom_reset
         self.power_end=power_end
+        self.original = original
         self.power_base = power
         self.reset()
         self.action_space = self.env.action_spec()
         self.obs_shape = self._state.shape
-        self.original = original
         
     def step(self, a):
         self._step_num += 1
@@ -142,7 +138,7 @@ class HumanoidStandupEnv():
         return self.env.physics.render(height=128, width=128, camera_id = 0)
 
     def sample_power(self, std=0.02):
-        if np.abs(self.power_base - self.power_end) <= 1e-3:
+        if np.abs(self.power_base - self.power_end) <= 1e-3 or self.original:
             self.power = self.power_base
             return
         self.power = np.clip(self.power_base + np.random.randn() * std, self.power_end, 1)
