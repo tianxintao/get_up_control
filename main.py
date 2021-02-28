@@ -13,7 +13,7 @@ from PPO import PPO
 from SAC import SAC
 from collections import defaultdict
 from torch.utils.tensorboard import SummaryWriter
-from env import CustomMountainCarEnv, HumanoidStandupEnv
+from env import CustomMountainCarEnv, HumanoidStandupEnv, HumanoidStandupRandomEnv
 from utils import PGBuffer, ReplayBuffer
 from env import CustomMountainCarEnv
 import argparse
@@ -27,8 +27,8 @@ def main():
     parser.add_argument('--original', default=False, action='store_true', help='if set true, use the default power/strength parameters')
     parser.add_argument('--debug', default=False, action='store_true')
     parser.add_argument("--seed", default=0, type=int)
-    parser.add_argument("--power", default=0.9, type=float)
-    parser.add_argument("--power_end", default=0.36, type=float)
+    parser.add_argument("--power", default=1.0, type=float)
+    parser.add_argument("--power_end", default=0.4, type=float)
     parser.add_argument('--max_timesteps', type=int, default=10000000, help='Number of simulation steps to run')
     parser.add_argument('--test_interval', type=int, default=20000, help='Number of simulation steps between tests')
     parser.add_argument('--test_iterations', type=int, default=10, help='Number of simulation steps between tests')

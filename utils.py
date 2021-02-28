@@ -3,6 +3,7 @@ import numpy as np
 import scipy.signal
 import os
 import logging
+import imageio
 
 class ReplayBuffer(object):
     def __init__(self, state_dim, action_dim, max_size=int(1e6)):
@@ -183,3 +184,5 @@ def create_logger(output_path):
     logger.addHandler(console_handler)
     logger.setLevel(os.environ.get("LOGLEVEL", "INFO"))
     return logger
+
+# def create_terrain(image_path=''):

@@ -30,7 +30,7 @@
 
   <worldbody>
     <!-- <geom name="floor" type="plane" conaffinity="1" size="100 100 .2" material="grid"/> -->
-    <geom name="floor" conaffinity="1" condim="3" material="grid" type="hfield" size="100 100 1" hfield="terrain"/>
+    <geom name="floor" conaffinity="1" condim="3" material="grid" type="hfield" hfield="terrain"/>
     <body name="torso" pos="0 0 1.5" childclass="body">
       <light name="top" pos="0 0 2" mode="trackcom"/>
       <camera name="back" pos="-3 0 1" xyaxes="0 -1 0 1 0 2" mode="trackcom"/>

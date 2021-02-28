@@ -6,6 +6,8 @@ from dm_control.utils import rewards
 import os
 import numpy as np
 import math
+import imageio
+
 
 class CustomMountainCarEnv(Continuous_MountainCarEnv):
     # By default,
@@ -75,7 +77,7 @@ class CustomMountainCarEnv(Continuous_MountainCarEnv):
             reward = 100.0
 
         if not exclude_energy:
-            reward -= math.pow(action[0] * (self.power/0.0015), 2) * 0.1 * ((0.0015/self.power) ** 2)
+            reward -= math.pow(action[0] * (self.power / 0.0015), 2) * 0.1 * ((0.0015 / self.power) ** 2)
         else:
             reward -= 0.05
 
@@ -90,20 +92,20 @@ class CustomMountainCarEnv(Continuous_MountainCarEnv):
 
 
 class HumanoidStandupEnv():
-    _STAND_HEIGHT = 1.59
+    _STAND_HEIGHT = 1.55
 
     def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.35):
-        self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random':seed})
+        self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random': seed})
         self.env._flat_observation = True
         self.physics = self.env.physics
         self.custom_reset = custom_reset
-        self.power_end=power_end
+        self.power_end = power_end
         self.original = original
         self.power_base = power
         self.reset()
         self.action_space = self.env.action_spec()
         self.obs_shape = self._state.shape
-        
+
     def step(self, a):
         self._step_num += 1
         self.timestep = self.env.step(a)
@@ -120,10 +122,10 @@ class HumanoidStandupEnv():
             while repeat:
                 self.env.reset()
                 with self.physics.reset_context():
-                    self.physics.named.data.qpos[:3] = [0,0,0.5]
-                    self.physics.named.data.qpos[3:7] = [0.707,0,-1,0]
+                    self.physics.named.data.qpos[:3] = [0, 0, 0.5]
+                    self.physics.named.data.qpos[3:7] = [0.707, 0, -1, 0]
                     self.physics.after_reset()
-                if self.physics.data.ncon == 0: repeat=False
+                if self.physics.data.ncon == 0: repeat = False
         else:
             self.timestep = self.env.reset()
         # with self.env.physics.reset_context():
@@ -133,9 +135,9 @@ class HumanoidStandupEnv():
         self.terminal_signal = False
         if not test_time: self.sample_power()
         return self._state
-    
+
     def render(self, mode=None):
-        return self.env.physics.render(height=128, width=128, camera_id = 0)
+        return self.env.physics.render(height=128, width=128, camera_id=0)
 
     def sample_power(self, std=0.02):
         if np.abs(self.power_base - self.power_end) <= 1e-3 or self.original:
@@ -157,7 +159,7 @@ class HumanoidStandupEnv():
 
     def set_power(self, power_dict):
         self.power = power_dict["power"]
-    
+
     @property
     def _state(self):
         _state = []
@@ -173,21 +175,28 @@ class HumanoidStandupEnv():
         return self.timestep.last()
 
     @property
-    def _reward(self):
-        standing = rewards.tolerance(self.physics.head_height(),
+    def _standing(self):
+        return rewards.tolerance(self.physics.head_height(),
                                  bounds=(self._STAND_HEIGHT, float('inf')),
-                                 margin=self._STAND_HEIGHT/4)
-        upright = rewards.tolerance(self.physics.torso_upright(),
-                                bounds=(0.9, float('inf')), sigmoid='linear',
-                                margin=1.9, value_at_margin=0)
-        
-        small_control = rewards.tolerance(self.physics.control(), margin=1,
-                                      value_at_margin=0,
-                                      sigmoid='quadratic').mean()
-        small_control = (4 + small_control) / 5
+                                 margin=self._STAND_HEIGHT / 4)
 
+    @property
+    def _small_control(self):
+        control_val = rewards.tolerance(self.physics.control(), margin=1,
+                                        value_at_margin=0,
+                                        sigmoid='quadratic').mean()
+        return (4 + control_val) / 5
+
+    @property
+    def _dont_move(self):
         horizontal_velocity = self.physics.center_of_mass_velocity()[[0, 1]]
-        dont_move = rewards.tolerance(horizontal_velocity, bounds=[-0.3,0.3], margin=1.2).mean()
+        return rewards.tolerance(horizontal_velocity, bounds=[-0.3, 0.3], margin=1.2).mean()
+
+    @property
+    def _reward(self):
+        upright = rewards.tolerance(self.physics.torso_upright(),
+                                    bounds=(0.9, float('inf')), sigmoid='linear',
+                                    margin=1.9, value_at_margin=0)
 
         # joint_limit = self.physics.model.jnt_range[1:]
         # joint_angle = self.physics.data.qpos[7:].copy()
@@ -195,4 +204,93 @@ class HumanoidStandupEnv():
         # between_limit = np.logical_and(joint_angle>joint_limit[:,0] + dif, joint_angle<joint_limit[:,1] - dif)
         # joint_limit_cost = np.where(between_limit, 1, 0).mean()
 
-        return standing*upright*small_control*dont_move
+        return self._standing * upright * self._standing * self._dont_move
+
+
+class HumanoidStandupRandomEnv(HumanoidStandupEnv):
+    random_terrain_path = './data/terrain.png'
+    slope_terrain_path = './data/slope.png'
+    xml_path = './data/humanoid.xml'
+
+    def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.35):
+        HumanoidStandupEnv.__init__(self, original, power, seed, custom_reset, power_end)
+        # self.create_random_terrain()
+        # self.create_slope_terrain()
+        self.create_random_terrain()
+        self.physics.reload_from_xml_path(self.xml_path)
+
+    def create_random_terrain(self):
+        if not os.path.exists(self.random_terrain_path):
+            image = np.random.random_sample((20, 20))
+            imageio.imwrite(self.random_terrain_path, image)
+
+    def create_slope_terrain(self):
+        self.terrain_shape = 40
+        slope_length = int(self.terrain_shape / 4)
+        image_mid = int(self.terrain_shape / 2)
+        if not os.path.exists(self.slope_terrain_path):
+            image = np.zeros((self.terrain_shape, self.terrain_shape))
+            # image = (image + (np.arange(20) + 1).reshape((1,20))) / 20 * 255
+            image[:, image_mid - slope_length:image_mid + slope_length] = (np.arange(2 * slope_length) + 1).reshape(
+                (1, 2 * slope_length)) / 20 * 255
+            imageio.imwrite(self.slope_terrain_path, image)
+
+    def get_terrain_height(self):
+        slope = imageio.imread(self.slope_terrain_path)
+        x, y, z = self.physics.center_of_mass_position()
+        x_ind = int((x + 10) / 20 * self.terrain_shape)
+        y_ind = int((y + 10) / 20 * self.terrain_shape)
+        height = slope[y_ind-1:y_ind+1,x_ind-1:x_ind+1].mean() / 255
+        return height
+
+    @property
+    def _standing(self):
+        # print(self.physics.head_height()-self.get_terrain_height())
+        return rewards.tolerance(self.physics.head_height()-self.get_terrain_height(),
+                                 bounds=(self._STAND_HEIGHT, float('inf')),
+                                 margin=self._STAND_HEIGHT / 4)
+
+
+class HumanoidBalanceEnv(HumanoidStandupEnv):
+    _STAND_HEIGHT = 1.4
+
+    def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.4):
+        self.power = power
+        HumanoidStandupEnv.__init__(self, original, power, seed, custom_reset, power_end)
+
+    def reset(self):
+
+        repeat = True
+        while repeat:
+            with self.physics.reset_context():
+                self.env.reset()
+                self.physics.named.data.qpos[:3] = [0, 0, 1.5]
+                self.physics.named.data.qpos[3:7] = [1, 0, 0, 0]
+                self.physics.after_reset()
+            if self.physics.data.ncon == 0: repeat = False
+
+        self.obs = self.env._task.get_observation(self.physics)
+        self._step_num = 0
+        self.terminal_signal = False
+
+        return self._state
+
+    @property
+    def _standing(self):
+        return rewards.tolerance(self.physics.head_height(),
+                                 bounds=(self._STAND_HEIGHT, float('inf')),
+                                 margin=self._STAND_HEIGHT / 4)
+
+    @property
+    def _dont_move(self):
+        horizontal_velocity = self.physics.center_of_mass_velocity()[[0, 1]]
+        return rewards.tolerance(horizontal_velocity, margin=2).mean()
+
+    @property
+    def _done(self):
+        if self._step_num >= 1000:
+            return True
+        if self.physics.center_of_mass_position()[2] < 0.65:
+            self.terminal_signal = True
+            return False
+        return self.timestep.last()
