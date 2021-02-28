@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--policy", default="SAC",choices=['SAC', 'PPO'])
     parser.add_argument('--original', default=False, action='store_true', help='if set true, use the default power/strength parameters')
     parser.add_argument('--debug', default=False, action='store_true')
+    parser.add_argument('--scheduler', default=False, action='store_true')
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--power", default=1.0, type=float)
     parser.add_argument("--power_end", default=0.4, type=float)
@@ -44,9 +45,9 @@ def main():
     parser.add_argument("--discount", default=0.99)
     parser.add_argument("--init_temperature", default=0.1)
     parser.add_argument("--critic_target_update_freq", default=2, type=int)
-    parser.add_argument("--alpha_lr", default=1e-4)
-    parser.add_argument("--actor_lr", default=1e-4)
-    parser.add_argument("--critic_lr", default=1e-4)
+    parser.add_argument("--alpha_lr", default=1e-4, type=float)
+    parser.add_argument("--actor_lr", default=1e-4, type=float)
+    parser.add_argument("--critic_lr", default=1e-4, type=float)
     parser.add_argument("--tau", default=0.005)
     parser.add_argument("--start_timesteps", default=10000, type=int)
 
@@ -123,7 +124,7 @@ def main():
             args=args)
         if args.load_dir:
             env.power_base = args.power_end
-            # buf.load(os.path.join(args.load_dir+'/buffer','checkpoint.npz'))
+            buf.load(os.path.join(args.load_dir+'/buffer','checkpoint.npz'))
             policy.load(os.path.join(args.load_dir+'/model','checkpoint'),load_optimizer=True)
         train_sac(policy, env, tb, logger, buf, args, video_dir, buffer_dir, model_dir, act_dim)
 
@@ -135,7 +136,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
     episode_reward = 0
     episode_timesteps = 0
     episode_num = 0
-    curriculum = False
+    deterministic = True if args.load_dir != None else False
 
     while t < int(args.max_timesteps):
 
@@ -158,7 +159,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
 
         # Train agent after collecting sufficient data
         if t >= args.start_timesteps:
-            policy.train(replay_buffer, curriculum, args.batch_size)
+            policy.train(replay_buffer, deterministic, args.batch_size)
 
         if done:
             console_output = "Total T: {t} Episode Num: {episode_num} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}"\
@@ -197,6 +198,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
                 replay_buffer.save(os.path.join(buffer_dir,'checkpoint'))
                 policy.save(os.path.join(model_dir,'checkpoint'))
                 logger.info("Checkpoint saved, deterministic env starts")
+                deterministic = True
         t += 1
 
 

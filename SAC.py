@@ -173,6 +173,21 @@ class SAC(object):
         )
 
         self.total_it = 0
+
+        if self.args.scheduler:
+            milestones = [1000000,1500000,2000000,3000000]
+            self.actor_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                self.actor_optimizer,
+                milestones=milestones,
+                gamma=0.5
+            )
+            self.critic_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                self.critic_optimizer,
+                milestones=milestones,
+                gamma=0.5
+            )
+            # self.log_alpha_scheduler = torch.optim.lr_scheduler.LambdaLR(self.log_alpha_optimizer, lambda_func)
+
         if self.args.debug:
             self.reset_record()
 
@@ -248,10 +263,10 @@ class SAC(object):
     #     self.log_alpha_optimizer.step()
 
  
-    def train(self, replay_buffer, curriculum, batch_size=100):
+    def train(self, replay_buffer, deterministic, batch_size=100):
         self.total_it += 1
 
-        state, action, next_state, reward, not_done = replay_buffer.sample(batch_size, curriculum)
+        state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
     
         with torch.no_grad():
             _, policy_action, log_pi, _ = self.actor(next_state)
@@ -292,6 +307,11 @@ class SAC(object):
             for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
                 target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
+        if self.args.scheduler:
+            self.actor_scheduler.step()
+            self.critic_scheduler.step()
+            # self.log_alpha_scheduler.step()
+
         if self.args.debug:
             self.critic_loss.append(critic_loss.item())
             self.actor_loss.append(actor_loss.item())
@@ -301,6 +321,7 @@ class SAC(object):
 
     def save(self, filename):
         torch.save(self.critic.state_dict(), filename + "_critic.pt")
+        torch.save(self.critic_target.state_dict(), filename + "_critic_target.pt")
         torch.save(self.critic_optimizer.state_dict(), filename + "_critic_optimizer.pt")
 
         torch.save(self.actor.state_dict(), filename + "_actor.pt")
@@ -313,12 +334,11 @@ class SAC(object):
         self.critic.load_state_dict(torch.load(filename + "_critic.pt"))
         self.critic_target = copy.deepcopy(self.critic)
         self.actor.load_state_dict(torch.load(filename + "_actor.pt"))
-        self.actor_target = copy.deepcopy(self.actor)
         self.log_alpha = torch.load(filename + "_log_alpha.pt")
 
         if load_optimizer:
             self.critic_optimizer.load_state_dict(torch.load(filename + "_critic_optimizer.pt"))
             self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer.pt"))
-            self.log_alpha_optimizer.load_state_dict(filename + "_log_alpha_optimizer.pt")
+            self.log_alpha_optimizer.load_state_dict(torch.load(filename + "_log_alpha_optimizer.pt"))
         
  

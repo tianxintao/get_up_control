@@ -92,12 +92,7 @@ class ReplayBuffer(object):
         self.ptr = (self.ptr + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
 
-    def sample(self, batch_size, curriculum):
-        # if curriculum:
-        #     ind = np.random.randint(self.ptr - 200000, self.ptr, size=batch_size)
-        # else:
-        #     ind = np.random.randint(0, self.size, size=batch_size)
-
+    def sample(self, batch_size):
         ind = np.random.randint(0, self.size, size=batch_size)
 
         return (

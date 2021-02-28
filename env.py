@@ -109,6 +109,7 @@ class HumanoidStandupEnv():
 
     def step(self, a):
         self._step_num += 1
+        if self.original: a = a * self.power
         self.timestep = self.env.step(a)
         self.obs = self.timestep.observation
         return self._state, self._reward, self._done, self.timestep
