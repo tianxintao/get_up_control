@@ -96,7 +96,6 @@ class HumanoidStandupEnv():
 
     def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.35):
         self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random': seed})
-        self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random':seed})
         self.env._flat_observation = True
         self.physics = self.env.physics
         self.custom_reset = custom_reset
@@ -106,6 +105,7 @@ class HumanoidStandupEnv():
         self.reset()
         self.action_space = self.env.action_spec()
         self.obs_shape = self._state.shape
+        self.physics.reload_from_xml_path('data/humanoid_static.xml')
 
     def step(self, a):
         self._step_num += 1
