@@ -1,7 +1,7 @@
 import time
 import imageio
 import numpy as np
-import gym
+import cv2
 import os
 import utils
 import json
@@ -11,11 +11,9 @@ import torch
 from tensorboardX import SummaryWriter
 from PPO import PPO
 from SAC import SAC
-from collections import defaultdict
 from torch.utils.tensorboard import SummaryWriter
-from env import CustomMountainCarEnv, HumanoidStandupEnv, HumanoidStandupRandomEnv
+from env import CustomMountainCarEnv, HumanoidStandupEnv, HumanoidStandupRandomEnv, HumanoidBalanceEnv, HumanoidBenchEnv
 from utils import PGBuffer, ReplayBuffer
-from env import CustomMountainCarEnv
 import argparse
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -27,6 +25,7 @@ def main():
     parser.add_argument('--original', default=False, action='store_true', help='if set true, use the default power/strength parameters')
     parser.add_argument('--debug', default=False, action='store_true')
     parser.add_argument('--scheduler', default=False, action='store_true')
+    parser.add_argument('--test_policy', default=False, action='store_true')
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--power", default=1.0, type=float)
     parser.add_argument("--power_end", default=0.4, type=float)
@@ -91,7 +90,7 @@ def main():
 
     tb = SummaryWriter(log_dir=os.path.join(experiment_dir, 'tb_logger'))
 
-    env = HumanoidStandupEnv(args.original, power=args.power, seed=args.seed, custom_reset=args.custom_reset, power_end=args.power_end)
+    env = HumanoidBenchEnv(args.original, power=args.power, seed=args.seed, custom_reset=args.custom_reset, power_end=args.power_end)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -136,6 +135,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
     episode_reward = 0
     episode_timesteps = 0
     episode_num = 0
+    best_reward = -np.inf
     deterministic = True if args.load_dir != None else False
 
     while t < int(args.max_timesteps):
@@ -149,6 +149,10 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
 
         next_state, reward, done, _ = env.step(a=action)
 
+        if args.test_policy:
+            cv2.imshow('image',env.render())
+            cv2.waitKey(1)
+
         episode_timesteps += 1
 
         # Store data in replay buffer
@@ -158,8 +162,9 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
         episode_reward += reward
 
         # Train agent after collecting sufficient data
-        if t >= args.start_timesteps:
+        if t >= args.start_timesteps and not args.test_policy:
             policy.train(replay_buffer, deterministic, args.batch_size)
+
 
         if done:
             console_output = "Total T: {t} Episode Num: {episode_num} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}"\
@@ -194,6 +199,10 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
             logger.info("Evaluation over 10 episodes: {:.3f}, Curriculum: {}".format(test_reward,curriculum))
             logger.info("-------------------------------------------------")
             logger.info("Current power: {}".format(env.power_base))
+            if(test_reward > best_reward):
+                policy.save(os.path.join(model_dir,'best_model'))
+                best_reward = test_reward
+                logger.info("Best model saved")
             if (save_checkpoint):
                 replay_buffer.save(os.path.join(buffer_dir,'checkpoint'))
                 policy.save(os.path.join(model_dir,'checkpoint'))
@@ -255,7 +264,7 @@ def train_ppo(policy,env,tb,logger,buf,args,video_dir):
 
 
 def run_tests(policy, train_env, args, video_tag):
-    test_env = HumanoidStandupEnv(args.original, seed=args.seed+10, custom_reset=args.custom_reset)
+    test_env = HumanoidBenchEnv(args.original, seed=args.seed+10, custom_reset=args.custom_reset)
     # test_env.seed(args.seed + 10)
     test_env.set_power(train_env.export_power())
     avg_reward = 0

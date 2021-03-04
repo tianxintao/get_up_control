@@ -139,7 +139,7 @@ class HumanoidStandupEnv():
         return self._state
 
     def render(self, mode=None):
-        return self.env.physics.render(height=128, width=128, camera_id=0)
+        return self.env.physics.render(height=256, width=256, camera_id=0)
 
     def sample_power(self, std=0.02):
         if np.abs(self.power_base - self.power_end) <= 1e-3 or self.original:
@@ -200,11 +200,10 @@ class HumanoidStandupEnv():
                                     bounds=(0.9, float('inf')), sigmoid='linear',
                                     margin=1.9, value_at_margin=0)
 
-        # joint_limit = self.physics.model.jnt_range[1:]
-        # joint_angle = self.physics.data.qpos[7:].copy()
-        # dif = 0.01 * (joint_limit[:,1] - joint_limit[:,0])
-        # between_limit = np.logical_and(joint_angle>joint_limit[:,0] + dif, joint_angle<joint_limit[:,1] - dif)
-        # joint_limit_cost = np.where(between_limit, 1, 0).mean()
+        joint_limit = self.physics.model.jnt_range[1:]
+        joint_angle = self.physics.data.qpos[7:].copy()
+        between_limit = np.logical_and(joint_angle>joint_limit[:,0], joint_angle<joint_limit[:,1])
+        joint_limit_cost = np.where(between_limit, 1, 0).mean()
 
         return self._standing * upright * self._standing * self._dont_move
 
@@ -252,6 +251,37 @@ class HumanoidStandupRandomEnv(HumanoidStandupEnv):
                                  bounds=(self._STAND_HEIGHT, float('inf')),
                                  margin=self._STAND_HEIGHT / 4)
 
+class HumanoidBenchEnv(HumanoidStandupEnv):
+    _STAND_HEIGHT = 1.55
+    xml_path = './data/humanoid_bench.xml'
+
+    def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.4):
+        self.default_qpos = None
+        HumanoidStandupEnv.__init__(self, original, power, seed, custom_reset, power_end)
+        self.physics.reload_from_xml_path(self.xml_path)
+        self.default_qpos = self.physics.data.qpos.copy()
+
+    def reset(self, test_time=False):
+        repeat = True
+        # self.physics.reload_from_xml_path(self.xml_path)
+        while repeat:
+            with self.physics.reset_context():
+                self.env.reset()
+                if not self.default_qpos is None:
+                    self.physics.data.qpos[:] = self.default_qpos
+                self.physics.named.data.qpos[:3] = [0, 0, 1.2]
+                self.physics.named.data.qpos['left_hip_y'] = -90 / 180 * 3.14
+                self.physics.named.data.qpos['right_hip_y'] = -90 / 180 * 3.14
+                self.physics.named.data.qpos['left_knee'] = -90 / 180 * 3.14
+                self.physics.named.data.qpos['right_knee'] = -90 / 180 * 3.14
+            self.physics.after_reset()
+            if self.physics.data.ncon == 0: repeat = False
+        self.obs = self.env._task.get_observation(self.physics)
+        self._step_num = 0
+        self.terminal_signal = False
+        if not test_time: self.sample_power()
+        return self._state
+
 
 class HumanoidBalanceEnv(HumanoidStandupEnv):
     _STAND_HEIGHT = 1.4
@@ -260,7 +290,7 @@ class HumanoidBalanceEnv(HumanoidStandupEnv):
         self.power = power
         HumanoidStandupEnv.__init__(self, original, power, seed, custom_reset, power_end)
 
-    def reset(self):
+    def reset(self, test_time=None):
 
         repeat = True
         while repeat:
@@ -294,5 +324,5 @@ class HumanoidBalanceEnv(HumanoidStandupEnv):
             return True
         if self.physics.center_of_mass_position()[2] < 0.65:
             self.terminal_signal = True
-            return False
+            return True
         return self.timestep.last()
