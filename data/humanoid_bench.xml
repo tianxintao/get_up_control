@@ -31,10 +31,10 @@
     <worldbody>
         <geom name="floor" type="plane" conaffinity="1" size="100 100 .2" material="grid"/>
         <!--    <geom name="floor" conaffinity="1" condim="3" material="grid" type="hfield" hfield="terrain"/>-->
-        <body name="bench" pos="0.0 0.0 0.5" quat="0.7071 0.0 0.0 0.7071">
-            <geom pos="0.0 0.0 0.0" size="0.5 0.3 0.1" type="box" mass="200" rgba="0 1 0 0.8"></geom>
-            <geom pos="-0.4 0.0 -0.25" size="0.1 0.3 0.15" type="box" mass="100" rgba="1 0 0 0.8"></geom>
-            <geom pos="0.4 0.0 -0.25" size="0.1 0.3 0.15" type="box" mass="100" rgba="0 0 1 0.8"></geom>
+        <body name="bench" pos="0.0 0.0 0.25" quat="0.7071 0.0 0.0 0.7071">
+            <geom pos="0.0 0.0 0.0" size="0.5 0.3 0.05" type="box" mass="200" rgba="0 1 0 0.8"></geom>
+            <geom pos="-0.4 0.0 -0.15" size="0.1 0.3 0.1" type="box" mass="100" rgba="1 0 0 0.8"></geom>
+            <geom pos="0.4 0.0 -0.15" size="0.1 0.3 0.1" type="box" mass="100" rgba="0 0 1 0.8"></geom>
         </body>
         
         <body name="torso" pos="0 0 1.5" childclass="body">

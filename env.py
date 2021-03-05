@@ -253,6 +253,8 @@ class HumanoidStandupRandomEnv(HumanoidStandupEnv):
 
 class HumanoidBenchEnv(HumanoidStandupEnv):
     _STAND_HEIGHT = 1.55
+    _bench_height = 0.3
+    bench_center = np.array([0, 0, _bench_height])
     xml_path = './data/humanoid_bench.xml'
 
     def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.4):
@@ -269,11 +271,11 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
                 self.env.reset()
                 if not self.default_qpos is None:
                     self.physics.data.qpos[:] = self.default_qpos
-                self.physics.named.data.qpos[:3] = [0, 0, 1.2]
+                self.physics.named.data.qpos[:3] = [0, 0, 1.0]
                 self.physics.named.data.qpos['left_hip_y'] = -90 / 180 * 3.14
                 self.physics.named.data.qpos['right_hip_y'] = -90 / 180 * 3.14
-                self.physics.named.data.qpos['left_knee'] = -90 / 180 * 3.14
-                self.physics.named.data.qpos['right_knee'] = -90 / 180 * 3.14
+                self.physics.named.data.qpos['left_knee'] = -75 / 180 * 3.14
+                self.physics.named.data.qpos['right_knee'] = -75 / 180 * 3.14
             self.physics.after_reset()
             if self.physics.data.ncon == 0: repeat = False
         self.obs = self.env._task.get_observation(self.physics)
@@ -282,47 +284,110 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
         if not test_time: self.sample_power()
         return self._state
 
-
-class HumanoidBalanceEnv(HumanoidStandupEnv):
-    _STAND_HEIGHT = 1.4
-
-    def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.4):
-        self.power = power
-        HumanoidStandupEnv.__init__(self, original, power, seed, custom_reset, power_end)
-
-    def reset(self, test_time=None):
-
-        repeat = True
-        while repeat:
-            with self.physics.reset_context():
-                self.env.reset()
-                self.physics.named.data.qpos[:3] = [0, 0, 1.5]
-                self.physics.named.data.qpos[3:7] = [1, 0, 0, 0]
-                self.physics.after_reset()
-            if self.physics.data.ncon == 0: repeat = False
-
-        self.obs = self.env._task.get_observation(self.physics)
-        self._step_num = 0
-        self.terminal_signal = False
-
-        return self._state
-
     @property
-    def _standing(self):
-        return rewards.tolerance(self.physics.head_height(),
-                                 bounds=(self._STAND_HEIGHT, float('inf')),
-                                 margin=self._STAND_HEIGHT / 4)
+    def _state(self):
+        _state = []
+        for part in self.obs.values():
+            _state.append(part if not np.isscalar(part) else [part])
 
-    @property
-    def _dont_move(self):
-        horizontal_velocity = self.physics.center_of_mass_velocity()[[0, 1]]
-        return rewards.tolerance(horizontal_velocity, margin=2).mean()
+        torso_pos = self.physics.named.data.xpos['torso']
+        torso_frame = self.physics.named.data.xmat['torso'].reshape(3, 3)
+        dist_to_chair = (self.bench_center - torso_pos).dot(torso_frame)
+        _state.append(dist_to_chair)
+
+        _state.append(self.physics.named.data.sensordata['butt_touch'])
+
+        _state.append([self.power])
+
+        return np.concatenate(_state)
 
     @property
     def _done(self):
-        if self._step_num >= 1000:
-            return True
-        if self.physics.center_of_mass_position()[2] < 0.65:
+        if self.physics.center_of_mass_position()[2] < self._bench_height:
             self.terminal_signal = True
             return True
+        if self._step_num >= 1000:
+            return True
         return self.timestep.last()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# class HumanoidBalanceEnv(HumanoidStandupEnv):
+#     _STAND_HEIGHT = 1.4
+#
+#     def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.4):
+#         self.power = power
+#         HumanoidStandupEnv.__init__(self, original, power, seed, custom_reset, power_end)
+#
+#     def reset(self, test_time=None):
+#
+#         repeat = True
+#         while repeat:
+#             with self.physics.reset_context():
+#                 self.env.reset()
+#                 self.physics.named.data.qpos[:3] = [0, 0, 1.5]
+#                 self.physics.named.data.qpos[3:7] = [1, 0, 0, 0]
+#                 self.physics.after_reset()
+#             if self.physics.data.ncon == 0: repeat = False
+#
+#         self.obs = self.env._task.get_observation(self.physics)
+#         self._step_num = 0
+#         self.terminal_signal = False
+#
+#         return self._state
+#
+#     @property
+#     def _standing(self):
+#         return rewards.tolerance(self.physics.head_height(),
+#                                  bounds=(self._STAND_HEIGHT, float('inf')),
+#                                  margin=self._STAND_HEIGHT / 4)
+#
+#     @property
+#     def _dont_move(self):
+#         horizontal_velocity = self.physics.center_of_mass_velocity()[[0, 1]]
+#         return rewards.tolerance(horizontal_velocity, margin=2).mean()
+#
+#     @property
+#     def _done(self):
+#         if self._step_num >= 1000:
+#             return True
+#         if self.physics.center_of_mass_position()[2] < 0.65:
+#             self.terminal_signal = True
+#             return True
+#         return self.timestep.last()
