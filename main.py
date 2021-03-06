@@ -12,7 +12,7 @@ from tensorboardX import SummaryWriter
 from PPO import PPO
 from SAC import SAC
 from torch.utils.tensorboard import SummaryWriter
-from env import CustomMountainCarEnv, HumanoidStandupEnv, HumanoidStandupRandomEnv, HumanoidBalanceEnv, HumanoidBenchEnv
+from env import CustomMountainCarEnv, HumanoidStandupEnv, HumanoidStandupRandomEnv, HumanoidBenchEnv
 from utils import PGBuffer, ReplayBuffer
 import argparse
 
@@ -90,7 +90,7 @@ def main():
 
     tb = SummaryWriter(log_dir=os.path.join(experiment_dir, 'tb_logger'))
 
-    env = HumanoidBenchEnv(args.original, power=args.power, seed=args.seed, custom_reset=args.custom_reset, power_end=args.power_end)
+    env = HumanoidStandupEnv(args.original, power=args.power, seed=args.seed, custom_reset=args.custom_reset, power_end=args.power_end)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -188,17 +188,18 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
             episode_num += 1
 
         if t % args.test_interval == 0:
-            test_reward, video = run_tests(policy, env, args, True)
+            test_reward, min_test_reward, video = run_tests(policy, env, args, True)
             tb.add_scalar("Test/Alpha", env.power_base, t)
             tb.add_scalar("Test/Reward", test_reward, t)
             if len(video) != 0:
                 imageio.mimsave(os.path.join(video_dir, 't_{}.mp4'.format(t)), video, fps=30)
-            save_checkpoint = env.adjust_power(test_reward)
+            save_checkpoint = env.adjust_power(min_test_reward)
             curriculum = env.power_base > args.power_end and env.power_base < args.power
             logger.info("-------------------------------------------------")
-            logger.info("Evaluation over 10 episodes: {:.3f}, Curriculum: {}".format(test_reward,curriculum))
+            logger.info("Evaluation over 10 episodes: {:.3f}, minimum reward: {:.3f} Curriculum: {}".\
+                format(test_reward, min_test_reward, curriculum))
             logger.info("-------------------------------------------------")
-            logger.info("Current power: {}".format(env.power_base))
+            logger.info("Current power: {:.3f}".format(env.power_base))
             if(test_reward > best_reward):
                 policy.save(os.path.join(model_dir,'best_model'))
                 best_reward = test_reward
@@ -264,21 +265,23 @@ def train_ppo(policy,env,tb,logger,buf,args,video_dir):
 
 
 def run_tests(policy, train_env, args, video_tag):
-    test_env = HumanoidBenchEnv(args.original, seed=args.seed+10, custom_reset=args.custom_reset)
+    test_env = HumanoidStandupEnv(args.original, seed=args.seed+10, custom_reset=args.custom_reset)
     # test_env.seed(args.seed + 10)
     test_env.set_power(train_env.export_power())
-    avg_reward = 0
+    test_reward = []
     video = []
     for i in range(args.test_iterations):
         state, done = test_env.reset(test_time=True), False
+        episode_reward = 0
         while not done:
             action = policy.select_action(np.array(state))
             if i==0 and video_tag:
                 video.append(test_env.render(mode="rgb_array"))
             state, reward, done, _ = test_env.step(action)
-            avg_reward += reward
-    # if video_tag: test_env.viewer.close()
-    return avg_reward / args.test_iterations, video
+            episode_reward += reward
+        test_reward.append(episode_reward)
+    test_reward = np.array(test_reward)
+    return test_reward.mean(), test_reward.min(), video
 
 
 if __name__ == "__main__":

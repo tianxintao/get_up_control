@@ -150,7 +150,7 @@ class HumanoidStandupEnv():
     def adjust_power(self, test_reward):
         if self.original or np.abs(self.power_base - self.power_end) <= 1e-3:
             return False
-        if test_reward > 180:
+        if test_reward > 90:
             self.power_base = max(0.95 * self.power_base, self.power_end)
         return np.abs(self.power_base - self.power_end) <= 1e-3
 
