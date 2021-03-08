@@ -139,7 +139,7 @@ class HumanoidStandupEnv():
         return self._state
 
     def render(self, mode=None):
-        return self.env.physics.render(height=256, width=256, camera_id=0)
+        return self.env.physics.render(height=128, width=128, camera_id=0)
 
     def sample_power(self, std=0.02):
         if np.abs(self.power_base - self.power_end) <= 1e-3 or self.original:
@@ -210,7 +210,8 @@ class HumanoidStandupEnv():
 
 class HumanoidStandupRandomEnv(HumanoidStandupEnv):
     random_terrain_path = './data/terrain.png'
-    slope_terrain_path = './data/slope.png'
+    max_height = 0.3
+    # slope_terrain_path = './data/slope.png'
     xml_path = './data/humanoid.xml'
 
     def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.35):
@@ -221,27 +222,32 @@ class HumanoidStandupRandomEnv(HumanoidStandupEnv):
         self.physics.reload_from_xml_path(self.xml_path)
 
     def create_random_terrain(self):
-        if not os.path.exists(self.random_terrain_path):
-            image = np.random.random_sample((20, 20))
-            imageio.imwrite(self.random_terrain_path, image)
+        image = np.random.random_sample((60, 60))
+        imageio.imwrite(self.random_terrain_path, image)
 
-    def create_slope_terrain(self):
-        self.terrain_shape = 40
-        slope_length = int(self.terrain_shape / 4)
-        image_mid = int(self.terrain_shape / 2)
-        if not os.path.exists(self.slope_terrain_path):
-            image = np.zeros((self.terrain_shape, self.terrain_shape))
-            # image = (image + (np.arange(20) + 1).reshape((1,20))) / 20 * 255
-            image[:, image_mid - slope_length:image_mid + slope_length] = (np.arange(2 * slope_length) + 1).reshape(
-                (1, 2 * slope_length)) / 20 * 255
-            imageio.imwrite(self.slope_terrain_path, image)
+    def reset(self, test_time=False):
+        self.create_random_terrain()
+        self.physics.reload_from_xml_path(self.xml_path)
+        return super.reset(test_time=test_time)
+
+    # def create_slope_terrain(self):
+    #     self.terrain_shape = 40
+    #     slope_length = int(self.terrain_shape / 4)
+    #     image_mid = int(self.terrain_shape / 2)
+    #     if not os.path.exists(self.slope_terrain_path):
+    #         image = np.zeros((self.terrain_shape, self.terrain_shape))
+    #         # image = (image + (np.arange(20) + 1).reshape((1,20))) / 20 * 255
+    #         image[:, image_mid - slope_length:image_mid + slope_length] = (np.arange(2 * slope_length) + 1).reshape(
+    #             (1, 2 * slope_length)) / 20 * 255
+    #         imageio.imwrite(self.slope_terrain_path, image)
 
     def get_terrain_height(self):
-        slope = imageio.imread(self.slope_terrain_path)
+        terrain = imageio.imread(self.slope_terrain_path)
         x, y, z = self.physics.center_of_mass_position()
         x_ind = int((x + 10) / 20 * self.terrain_shape)
         y_ind = int((y + 10) / 20 * self.terrain_shape)
-        height = slope[y_ind-1:y_ind+1,x_ind-1:x_ind+1].mean() / 255
+        # collect the hightfield data from the nearby 5x5 region
+        height = terrain[y_ind-2:y_ind+3,x_ind-2:x_ind+3].mean() * self.max_height
         return height
 
     @property

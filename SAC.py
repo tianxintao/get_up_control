@@ -175,7 +175,7 @@ class SAC(object):
         self.total_it = 0
 
         if self.args.scheduler:
-            milestones = [1000000,1500000,2000000,3000000]
+            milestones = [50000,200000,600000,2000000]
             self.actor_scheduler = torch.optim.lr_scheduler.MultiStepLR(
                 self.actor_optimizer,
                 milestones=milestones,
@@ -307,7 +307,7 @@ class SAC(object):
             for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
                 target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        if self.args.scheduler:
+        if self.args.scheduler and deterministic:
             self.actor_scheduler.step()
             self.critic_scheduler.step()
             # self.log_alpha_scheduler.step()
@@ -332,9 +332,12 @@ class SAC(object):
 
     def load(self, filename, load_optimizer=False):
         self.critic.load_state_dict(torch.load(filename + "_critic.pt"))
-        self.critic_target = copy.deepcopy(self.critic)
+        self.critic_target.load_state_dict(torch.load(filename + "_critic_target.pt"))
         self.actor.load_state_dict(torch.load(filename + "_actor.pt"))
         self.log_alpha = torch.load(filename + "_log_alpha.pt")
+        self.log_alpha_optimizer = torch.optim.Adam(
+            [self.log_alpha], lr=1e-4, betas=(0.9, 0.999)
+        )
 
         if load_optimizer:
             self.critic_optimizer.load_state_dict(torch.load(filename + "_critic_optimizer.pt"))

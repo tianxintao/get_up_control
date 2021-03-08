@@ -18,9 +18,17 @@ import argparse
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+def env_function(args):
+    if args.env == 'HumanoidStandup':
+        return HumanoidStandupEnv
+    elif args.env == "HumanoidRandom":
+        return HumanoidStandupRandomEnv
+    elif args.env == "HumanoidBench":
+        return HumanoidBenchEnv
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='HumanoidStandup', choices=['HumanoidStandup','MountainCarContinuous-v0'])
+    parser.add_argument('--env', type=str, default='HumanoidStandup', choices=['HumanoidStandup','HumanoidRandom','HumanoidBench','MountainCarContinuous-v0'])
     parser.add_argument("--policy", default="SAC",choices=['SAC', 'PPO'])
     parser.add_argument('--original', default=False, action='store_true', help='if set true, use the default power/strength parameters')
     parser.add_argument('--debug', default=False, action='store_true')
@@ -90,7 +98,8 @@ def main():
 
     tb = SummaryWriter(log_dir=os.path.join(experiment_dir, 'tb_logger'))
 
-    env = HumanoidStandupEnv(args.original, power=args.power, seed=args.seed, custom_reset=args.custom_reset, power_end=args.power_end)
+    env_generator = env_function(args)
+    env = env_generator(args.original, power=args.power, seed=args.seed, custom_reset=args.custom_reset, power_end=args.power_end)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -265,7 +274,8 @@ def train_ppo(policy,env,tb,logger,buf,args,video_dir):
 
 
 def run_tests(policy, train_env, args, video_tag):
-    test_env = HumanoidStandupEnv(args.original, seed=args.seed+10, custom_reset=args.custom_reset)
+    test_env_generator = env_function(args)
+    test_env = test_env_generator(args.original, seed=args.seed+10, custom_reset=args.custom_reset)
     # test_env.seed(args.seed + 10)
     test_env.set_power(train_env.export_power())
     test_reward = []

@@ -121,6 +121,7 @@ class ReplayBuffer(object):
         self.state = data['state']
         self.action = data['action']
         self.next_state = data['next_state']
+        self.reward = data['reward']
         self.not_done = data['not_done']
         self.ptr = data['ptr']
         self.size = data['size']
