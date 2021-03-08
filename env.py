@@ -309,12 +309,18 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
 
     @property
     def _done(self):
-        if self.physics.center_of_mass_position()[2] < self._bench_height:
+        if self.physics.center_of_mass_position()[2] < (self._bench_height + 0.1):
             self.terminal_signal = True
             return True
         if self._step_num >= 1000:
             return True
         return self.timestep.last()
+
+    @property
+    def _standing(self):
+        return rewards.tolerance(self.physics.head_height(),
+                                 bounds=(self._STAND_HEIGHT, float('inf')),
+                                 margin=self._STAND_HEIGHT / 2)
 
 
 
