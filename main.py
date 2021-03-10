@@ -47,6 +47,10 @@ def main():
     parser.add_argument("--work_dir", default='./experiment/')
     parser.add_argument("--load_dir", default=None, type=str)
 
+    # Terrain hyperparameters
+    parser.add_argument('--add_terrain', default=False, action='store_true')
+    parser.add_argument('--terrain_dim', default=16, type=int)
+
     # SAC hyperparameters
     parser.add_argument("--batch_size", default=1024, type=int)
     parser.add_argument("--discount", default=0.99)
@@ -99,7 +103,7 @@ def main():
     tb = SummaryWriter(log_dir=os.path.join(experiment_dir, 'tb_logger'))
 
     env_generator = env_function(args)
-    env = env_generator(args.original, power=args.power, seed=args.seed, custom_reset=args.custom_reset, power_end=args.power_end)
+    env = env_generator(args, args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -131,9 +135,9 @@ def main():
             critic_target_update_freq=args.critic_target_update_freq,
             args=args)
         if args.load_dir:
-            env.power_base = args.power_end
-            buf.load(os.path.join(args.load_dir+'/buffer','checkpoint.npz'))
-            policy.load(os.path.join(args.load_dir+'/model','checkpoint'),load_optimizer=True)
+            env.power_base = 1.0
+            # buf.load(os.path.join(args.load_dir+'/buffer','checkpoint.npz'))
+            policy.load(os.path.join(args.load_dir+'/model','best_model'),load_optimizer=True)
         train_sac(policy, env, tb, logger, buf, args, video_dir, buffer_dir, model_dir, act_dim)
 
 
@@ -275,7 +279,7 @@ def train_ppo(policy,env,tb,logger,buf,args,video_dir):
 
 def run_tests(policy, train_env, args, video_tag):
     test_env_generator = env_function(args)
-    test_env = test_env_generator(args.original, seed=args.seed+10, custom_reset=args.custom_reset)
+    test_env = test_env_generator(args, args.seed)
     # test_env.seed(args.seed + 10)
     test_env.set_power(train_env.export_power())
     test_reward = []

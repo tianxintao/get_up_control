@@ -45,12 +45,12 @@ def weight_init(m):
 
 class Actor(nn.Module):
     """MLP actor network."""
-    def __init__(self, state_dim, action_dim, log_std_min, log_std_max, original):
+    def __init__(self, state_dim, action_dim, log_std_min, log_std_max, original, encoder):
         super().__init__()
 
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
-
+        self.encoder = encoder
         self.original = original
 
         self.trunk = nn.Sequential(
@@ -62,9 +62,12 @@ class Actor(nn.Module):
         # self.outputs = dict()
         self.apply(weight_init)
 
-    def forward(self, state, compute_pi=True, compute_log_pi=True):
+    def forward(self, state, compute_pi=True, compute_log_pi=True, terrain=None):
 
         power = state[:,-1]
+        if terrain is not None:
+            terrain_encoded = self.encoder(terrain, detach=True)
+            state = torch.cat([state, terrain_encoded], dim=1)
         mu, log_std = self.trunk(state).chunk(2, dim=-1)
 
         log_std = torch.tanh(log_std)
@@ -91,9 +94,9 @@ class Actor(nn.Module):
 
 class Critic(nn.Module):
     """Critic network, employes two q-functions."""
-    def __init__(self, state_dim, action_dim):
+    def __init__(self, state_dim, action_dim, encoder):
         super().__init__()
-
+        self.encoder = encoder
         self.Q1 = nn.Sequential(
             nn.Linear(state_dim + action_dim, 1024), nn.ReLU(),
             nn.Linear(1024, 1024), nn.ReLU(),
@@ -108,13 +111,48 @@ class Critic(nn.Module):
 
         self.apply(weight_init)
 
-    def forward(self, state, action):
+    def forward(self, state, action, terrain=None, detach=False):
         # detach_encoder allows to stop gradient propogation to encoder
+        if terrain is not None:
+            terrain_encoded = self.encoder(terrain, detach=detach)
+            state = torch.cat([state, terrain_encoded], dim=1)
         state_action = torch.cat([state, action], dim=1)
         q1 = self.Q1(state_action)
         q2 = self.Q2(state_action)
 
         return q1, q2
+
+
+class Encoder(nn.Module):
+    """Convolutional encoder of pixels observations."""
+    def __init__(self, obs_shape, feature_dim):
+        super().__init__()
+
+        self.convs = nn.Sequential(
+            nn.Conv2d(1, 16, 3, stride=1), nn.ReLU(),
+            nn.Conv2d(16, 16, 3, stride=1), nn.ReLU(),
+            nn.Conv2d(16, 16, 3, stride=1), nn.ReLU(),
+        )
+
+        # Debug needed
+        output_size = self.convs(torch.randn(1,1,obs_shape,obs_shape)).size
+
+        self.ln = nn.Sequential(
+            nn.Linear(output_size, 64), nn.ReLU(),
+            nn.Linear(64, 64), nn.ReLU(),
+            nn.Linear(64, feature_dim)
+        )
+
+        self.apply(weight_init)
+
+    def forward(self, obs, detach=False):
+        h = self.convs(obs)
+        h = h.view(h.size(0), -1)
+
+        if detach:
+            h = h.detach()
+
+        return self.ln(h)
 
 
 class SAC(object):
@@ -142,10 +180,15 @@ class SAC(object):
         self.tau = tau
         self.policy_freq = policy_freq
         self.critic_target_update_freq = critic_target_update_freq
+        self.encoder = None
 
-        self.actor = Actor(state_dim, action_dim, actor_log_std_min, actor_log_std_max, args.original).to(device)
+        if self.args.add_terrain:
+            state_dim = state_dim + self.args.terrain_dim
+            self.encoder = Encoder(5, self.args.terrain_dim)
 
-        self.critic = Critic(state_dim, action_dim).to(device)
+        self.actor = Actor(state_dim, action_dim, actor_log_std_min, actor_log_std_max, args.original, self.encoder).to(device)
+
+        self.critic = Critic(state_dim, action_dim, self.encoder).to(device)
 
         self.critic_target = copy.deepcopy(self.critic)
 
@@ -186,7 +229,6 @@ class SAC(object):
                 milestones=milestones,
                 gamma=0.5
             )
-            # self.log_alpha_scheduler = torch.optim.lr_scheduler.LambdaLR(self.log_alpha_optimizer, lambda_func)
 
         if self.args.debug:
             self.reset_record()
@@ -201,67 +243,19 @@ class SAC(object):
     def alpha(self):
         return self.log_alpha.exp()
 
-    def select_action(self, state):
+    def select_action(self, state, terrain=None):
         with torch.no_grad():
             state = torch.FloatTensor(state.reshape(1, -1)).to(device)
             mu, _, _, _ = self.actor(
-                state, compute_pi=False, compute_log_pi=False
+                state, compute_pi=False, compute_log_pi=False, terrain=terrain
             )
             return mu.cpu().data.numpy().flatten()
 
-    def sample_action(self, state):
+    def sample_action(self, state, terrain=None):
         with torch.no_grad():
             state = torch.FloatTensor(state.reshape(1, -1)).to(device)
-            mu, pi, _, _ = self.actor(state, compute_log_pi=False)
+            mu, pi, _, _ = self.actor(state, compute_log_pi=False, terrain=terrain)
             return pi.cpu().data.numpy().flatten()
-
-    # def update_critic(self, state, action, reward, next_state, not_done, L, step):
-    #     with torch.no_grad():
-    #         _, policy_action, log_pi, _ = self.actor(next_state)
-    #         target_Q1, target_Q2 = self.critic_target(next_state, policy_action)
-    #         target_V = torch.min(target_Q1,
-    #                              target_Q2) - self.alpha.detach() * log_pi
-    #         target_Q = reward + (not_done * self.discount * target_V)
-
-    #     # get current Q estimates
-    #     current_Q1, current_Q2 = self.critic(
-    #         state, action, detach_encoder=self.detach_encoder)
-    #     critic_loss = F.mse_loss(current_Q1,
-    #                              target_Q) + F.mse_loss(current_Q2, target_Q)
-    #     # if step % self.log_interval == 0:
-    #     #     L.log('train_critic/loss', critic_loss, step)
-    #     if self.args.debug:
-            
-
-
-    #     # Optimize the critic
-    #     self.critic_optimizer.zero_grad()
-    #     critic_loss.backward()
-    #     self.critic_optimizer.step()
-
-    #     self.critic.log(L, step)
-
-    # def update_actor_and_alpha(self, state, L, step):
-    #     # detach encoder, so we don't update it with the actor loss
-    #     _, pi, log_pi, log_std = self.actor(state, detach_encoder=True)
-    #     actor_Q1, actor_Q2 = self.critic(state, pi, detach_encoder=True)
-
-    #     actor_Q = torch.min(actor_Q1, actor_Q2)
-    #     actor_loss = (self.alpha.detach() * log_pi - actor_Q).mean()
-
-    #     # optimize the actor
-    #     self.actor_optimizer.zero_grad()
-    #     actor_loss.backward()
-    #     self.actor_optimizer.step()
-
-    #     self.actor.log(L, step)
-
-    #     self.log_alpha_optimizer.zero_grad()
-    #     alpha_loss = (self.alpha * (-log_pi - self.target_entropy).detach()).mean()
-
-    #     alpha_loss.backward()
-    #     self.log_alpha_optimizer.step()
-
  
     def train(self, replay_buffer, deterministic, batch_size=100):
         self.total_it += 1

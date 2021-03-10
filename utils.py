@@ -4,6 +4,7 @@ import scipy.signal
 import os
 import logging
 import imageio
+from dm_control.mujoco.wrapper import mjbindings
 
 class ReplayBuffer(object):
     def __init__(self, state_dim, action_dim, max_size=int(1e6)):
@@ -244,4 +245,22 @@ def create_logger(output_path):
     logger.setLevel(os.environ.get("LOGLEVEL", "INFO"))
     return logger
 
-# def create_terrain(image_path=''):
+def randomize_limited_and_rotational_joints(physics, k=0.1):
+    random = np.random
+
+    hinge = mjbindings.enums.mjtJoint.mjJNT_HINGE
+    slide = mjbindings.enums.mjtJoint.mjJNT_SLIDE
+    ball = mjbindings.enums.mjtJoint.mjJNT_BALL
+    free = mjbindings.enums.mjtJoint.mjJNT_FREE
+
+    qpos = physics.named.data.qpos
+
+    for joint_id in range(physics.model.njnt):
+        joint_name = physics.model.id2name(joint_id, 'joint')
+        joint_type = physics.model.jnt_type[joint_id]
+        is_limited = physics.model.jnt_limited[joint_id]
+        range_min, range_max = physics.model.jnt_range[joint_id]
+
+        if is_limited:
+            if joint_type == hinge or joint_type == slide:
+                qpos[joint_name] = random.uniform(k * range_min, k * range_max)

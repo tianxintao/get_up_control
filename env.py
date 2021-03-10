@@ -7,6 +7,7 @@ import os
 import numpy as np
 import math
 import imageio
+import utils
 
 
 class CustomMountainCarEnv(Continuous_MountainCarEnv):
@@ -94,17 +95,18 @@ class CustomMountainCarEnv(Continuous_MountainCarEnv):
 class HumanoidStandupEnv():
     _STAND_HEIGHT = 1.55
 
-    def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.35):
+    def __init__(self, args, seed):
         self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random': seed})
         self.env._flat_observation = True
         self.physics = self.env.physics
-        self.custom_reset = custom_reset
-        self.power_end = power_end
-        self.original = original
-        self.power_base = power
+        self.custom_reset = args.custom_reset
+        self.power_end = args.power_end
+        self.original = args.original
+        self.power_base = args.power
         self.reset()
         self.action_space = self.env.action_spec()
         self.obs_shape = self._state.shape
+        self.args = args
         self.physics.reload_from_xml_path('data/humanoid_static.xml')
 
     def step(self, a):
@@ -147,10 +149,10 @@ class HumanoidStandupEnv():
             return
         self.power = np.clip(self.power_base + np.random.randn() * std, self.power_end, 1)
 
-    def adjust_power(self, test_reward):
+    def adjust_power(self, test_reward, threshold=90):
         if self.original or np.abs(self.power_base - self.power_end) <= 1e-3:
             return False
-        if test_reward > 90:
+        if test_reward > threshold:
             self.power_base = max(0.95 * self.power_base, self.power_end)
         return np.abs(self.power_base - self.power_end) <= 1e-3
 
@@ -211,24 +213,25 @@ class HumanoidStandupEnv():
 class HumanoidStandupRandomEnv(HumanoidStandupEnv):
     random_terrain_path = './data/terrain.png'
     max_height = 0.3
+    terrain_shape = 60
     # slope_terrain_path = './data/slope.png'
     xml_path = './data/humanoid.xml'
 
-    def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.35):
-        HumanoidStandupEnv.__init__(self, original, power, seed, custom_reset, power_end)
+    def __init__(self, args, seed):
+        HumanoidStandupEnv.__init__(self, args, seed)
         # self.create_random_terrain()
         # self.create_slope_terrain()
         self.create_random_terrain()
         self.physics.reload_from_xml_path(self.xml_path)
 
     def create_random_terrain(self):
-        image = np.random.random_sample((60, 60))
-        imageio.imwrite(self.random_terrain_path, image)
+        self.terrain = np.random.random_sample((self.terrain_shape, self.terrain_shape))
+        imageio.imwrite(self.random_terrain_path, (self.terrain * 255).astype(np.uint8))
 
     def reset(self, test_time=False):
         self.create_random_terrain()
         self.physics.reload_from_xml_path(self.xml_path)
-        return super.reset(test_time=test_time)
+        return HumanoidStandupEnv.reset(self,test_time=test_time)
 
     # def create_slope_terrain(self):
     #     self.terrain_shape = 40
@@ -242,12 +245,11 @@ class HumanoidStandupRandomEnv(HumanoidStandupEnv):
     #         imageio.imwrite(self.slope_terrain_path, image)
 
     def get_terrain_height(self):
-        terrain = imageio.imread(self.slope_terrain_path)
         x, y, z = self.physics.center_of_mass_position()
         x_ind = int((x + 10) / 20 * self.terrain_shape)
         y_ind = int((y + 10) / 20 * self.terrain_shape)
         # collect the hightfield data from the nearby 5x5 region
-        height = terrain[y_ind-2:y_ind+3,x_ind-2:x_ind+3].mean() * self.max_height
+        height = self.terrain[y_ind-2:y_ind+3,x_ind-2:x_ind+3].mean() * self.max_height
         return height
 
     @property
@@ -263,9 +265,9 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
     bench_center = np.array([0, 0, _bench_height])
     xml_path = './data/humanoid_bench.xml'
 
-    def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.4):
+    def __init__(self, args, seed):
         self.default_qpos = None
-        HumanoidStandupEnv.__init__(self, original, power, seed, custom_reset, power_end)
+        HumanoidStandupEnv.__init__(self, args, seed)
         self.physics.reload_from_xml_path(self.xml_path)
         self.default_qpos = self.physics.data.qpos.copy()
 
@@ -277,6 +279,7 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
                 self.env.reset()
                 if not self.default_qpos is None:
                     self.physics.data.qpos[:] = self.default_qpos
+                utils.randomize_limited_and_rotational_joints(self.physics, k=0.1)
                 self.physics.named.data.qpos[:3] = [0, 0, 1.0]
                 self.physics.named.data.qpos['left_hip_y'] = -90 / 180 * 3.14
                 self.physics.named.data.qpos['right_hip_y'] = -90 / 180 * 3.14
@@ -289,6 +292,9 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
         self.terminal_signal = False
         if not test_time: self.sample_power()
         return self._state
+
+    def adjust_power(self, test_reward, threshold=150):
+        return super().adjust_power(test_reward, threshold=150)
 
     @property
     def _state(self):
