@@ -50,6 +50,7 @@ def main():
     # Terrain hyperparameters
     parser.add_argument('--add_terrain', default=False, action='store_true')
     parser.add_argument('--terrain_dim', default=16, type=int)
+    parser.add_argument('--heightfield_dim', default=9, type=int)
 
     # SAC hyperparameters
     parser.add_argument("--batch_size", default=1024, type=int)
@@ -78,6 +79,9 @@ def main():
     parser.add_argument("--tag", default="")
 
     args = parser.parse_args()
+
+    if args.add_terrain:
+        assert args.env=="HumanoidRandom", "{} environment does not output terrain".format(args.env)
 
     ts = time.gmtime()
     ts = time.strftime("%m-%d-%H-%M", ts)
@@ -124,7 +128,7 @@ def main():
         buf = PGBuffer(obs_dim, act_dim, discrete, steps_per_epoch, args, device)
         train_ppo(policy,env,tb,logger,buf,args,video_dir)
     elif args.policy == "SAC":
-        buf = ReplayBuffer(obs_dim, act_dim, max_size=int(args.replay_buffer_size))
+        buf = ReplayBuffer(obs_dim, act_dim, args, max_size=int(args.replay_buffer_size))
         policy = SAC(obs_dim,act_dim,
             init_temperature=args.init_temperature,
             alpha_lr=args.alpha_lr,
@@ -157,7 +161,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
         if t < args.start_timesteps and args.load_dir == None:
             action = np.clip(2 * np.random.random_sample(size=action_dim) - 1, -env.power, env.power)
         else:
-            action = policy.sample_action(np.array(state))
+            action = policy.sample_action(np.array(state["scalar"]), terrain=state["terrain"])
 
 
         next_state, reward, done, _ = env.step(a=action)
@@ -288,7 +292,7 @@ def run_tests(policy, train_env, args, video_tag):
         state, done = test_env.reset(test_time=True), False
         episode_reward = 0
         while not done:
-            action = policy.select_action(np.array(state))
+            action = policy.select_action(np.array(state["scalar"]), terrain=state["terrain"])
             if i==0 and video_tag:
                 video.append(test_env.render(mode="rgb_array"))
             state, reward, done, _ = test_env.step(action)

@@ -97,6 +97,7 @@ class HumanoidStandupEnv():
 
     def __init__(self, args, seed):
         self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random': seed})
+        self.args = args
         self.env._flat_observation = True
         self.physics = self.env.physics
         self.custom_reset = args.custom_reset
@@ -105,8 +106,7 @@ class HumanoidStandupEnv():
         self.power_base = args.power
         self.reset()
         self.action_space = self.env.action_spec()
-        self.obs_shape = self._state.shape
-        self.args = args
+        self.obs_shape = self._state["scalar"].shape
         self.physics.reload_from_xml_path('data/humanoid_static.xml')
 
     def step(self, a):
@@ -170,7 +170,10 @@ class HumanoidStandupEnv():
         for part in self.obs.values():
             _state.append(part if not np.isscalar(part) else [part])
         _state.append([self.power])
-        return np.concatenate(_state)
+        return {
+            "scalar": np.concatenate(_state),
+            "terrain": None,
+        }
 
     @property
     def _done(self):
@@ -244,20 +247,30 @@ class HumanoidStandupRandomEnv(HumanoidStandupEnv):
     #             (1, 2 * slope_length)) / 20 * 255
     #         imageio.imwrite(self.slope_terrain_path, image)
 
+    @property
+    def _state(self):
+        state = super()._state
+        if self.args.add_terrain:
+            state["terrain"] = self.get_terrain_height()
+        return state
+ 
     def get_terrain_height(self):
+        half_size = self.args.heightfield_dim // 2
         x, y, z = self.physics.center_of_mass_position()
         x_ind = int((x + 10) / 20 * self.terrain_shape)
         y_ind = int((y + 10) / 20 * self.terrain_shape)
         # collect the hightfield data from the nearby 5x5 region
-        height = self.terrain[y_ind-2:y_ind+3,x_ind-2:x_ind+3].mean() * self.max_height
-        return height
+        self.terrain_profile = self.terrain[y_ind-1:y_ind+2,x_ind-1:x_ind+2]
+        # height = self.terrain_profile.mean() * self.max_height
+        return self.terrain[y_ind-half_size:y_ind+half_size+1,x_ind-half_size:x_ind+half_size+1]
 
-    @property
-    def _standing(self):
-        # print(self.physics.head_height()-self.get_terrain_height())
-        return rewards.tolerance(self.physics.head_height()-self.get_terrain_height(),
-                                 bounds=(self._STAND_HEIGHT, float('inf')),
-                                 margin=self._STAND_HEIGHT / 4)
+    # @property
+    # def _standing(self):
+    #     mean_height = self.terrain_profile.mean() * self.max_height
+    #     # print(self.physics.head_height()-self.get_terrain_height())
+    #     return rewards.tolerance(self.physics.head_height()-mean_height,
+    #                              bounds=(self._STAND_HEIGHT, float('inf')),
+    #                              margin=self._STAND_HEIGHT / 4)
 
 class HumanoidBenchEnv(HumanoidStandupEnv):
     _STAND_HEIGHT = 1.55
@@ -293,8 +306,8 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
         if not test_time: self.sample_power()
         return self._state
 
-    def adjust_power(self, test_reward, threshold=150):
-        return super().adjust_power(test_reward, threshold=150)
+    def adjust_power(self, test_reward, threshold=120):
+        return super().adjust_power(test_reward, threshold=120)
 
     @property
     def _state(self):
@@ -311,7 +324,10 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
 
         _state.append([self.power])
 
-        return np.concatenate(_state)
+        return {
+            "scalar": np.concatenate(_state),
+            "terrain": None,
+        }
 
     @property
     def _done(self):
