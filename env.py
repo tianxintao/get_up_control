@@ -250,7 +250,8 @@ class HumanoidStandupRandomEnv(HumanoidStandupEnv):
     @property
     def _state(self):
         state = super()._state
-        state["terrain"] = self.get_terrain_height()
+        if self.args.add_terrain:
+            state["terrain"] = self.get_terrain_height()
         return state
  
     def get_terrain_height(self):
@@ -259,17 +260,17 @@ class HumanoidStandupRandomEnv(HumanoidStandupEnv):
         x_ind = int((x + 10) / 20 * self.terrain_shape)
         y_ind = int((y + 10) / 20 * self.terrain_shape)
         # collect the hightfield data from the nearby 5x5 region
-        self.terrain_profile = self.terrain[y_ind-half_size:y_ind+half_size+1,x_ind-half_size:x_ind+half_size+1]
+        self.terrain_profile = self.terrain[y_ind-1:y_ind+2,x_ind-1:x_ind+2]
         # height = self.terrain_profile.mean() * self.max_height
-        return self.terrain_profile
+        return self.terrain[y_ind-half_size:y_ind+half_size+1,x_ind-half_size:x_ind+half_size+1]
 
-    @property
-    def _standing(self):
-        mean_height = self.terrain_profile.mean() * self.max_height
-        # print(self.physics.head_height()-self.get_terrain_height())
-        return rewards.tolerance(self.physics.head_height()-mean_height,
-                                 bounds=(self._STAND_HEIGHT, float('inf')),
-                                 margin=self._STAND_HEIGHT / 4)
+    # @property
+    # def _standing(self):
+    #     mean_height = self.terrain_profile.mean() * self.max_height
+    #     # print(self.physics.head_height()-self.get_terrain_height())
+    #     return rewards.tolerance(self.physics.head_height()-mean_height,
+    #                              bounds=(self._STAND_HEIGHT, float('inf')),
+    #                              margin=self._STAND_HEIGHT / 4)
 
 class HumanoidBenchEnv(HumanoidStandupEnv):
     _STAND_HEIGHT = 1.55
@@ -323,7 +324,10 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
 
         _state.append([self.power])
 
-        return np.concatenate(_state)
+        return {
+            "scalar": np.concatenate(_state),
+            "terrain": None,
+        }
 
     @property
     def _done(self):
