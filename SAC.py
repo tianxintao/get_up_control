@@ -135,12 +135,12 @@ class Encoder(nn.Module):
         )
 
         # Debug needed
-        output_size = self.convs(torch.randn(1,1,obs_shape,obs_shape)).size
+        output_size = self.convs(torch.randn(1,1,obs_shape,obs_shape)).shape.numel()
 
         self.ln = nn.Sequential(
             nn.Linear(output_size, 64), nn.ReLU(),
-            nn.Linear(64, 64), nn.ReLU(),
-            nn.Linear(64, feature_dim)
+            nn.Linear(64, 32), nn.ReLU(),
+            nn.Linear(32, feature_dim)
         )
 
         self.apply(weight_init)
@@ -184,7 +184,7 @@ class SAC(object):
 
         if self.args.add_terrain:
             state_dim = state_dim + self.args.terrain_dim
-            self.encoder = Encoder(5, self.args.terrain_dim)
+            self.encoder = Encoder(self.args.heightfield_dim, self.args.terrain_dim)
 
         self.actor = Actor(state_dim, action_dim, actor_log_std_min, actor_log_std_max, args.original, self.encoder).to(device)
 
@@ -246,6 +246,7 @@ class SAC(object):
     def select_action(self, state, terrain=None):
         with torch.no_grad():
             state = torch.FloatTensor(state.reshape(1, -1)).to(device)
+            terrain = torch.FloatTensor(terrain).unsqueeze(0).unsqueeze(0).to(device)
             mu, _, _, _ = self.actor(
                 state, compute_pi=False, compute_log_pi=False, terrain=terrain
             )
@@ -254,22 +255,23 @@ class SAC(object):
     def sample_action(self, state, terrain=None):
         with torch.no_grad():
             state = torch.FloatTensor(state.reshape(1, -1)).to(device)
+            terrain = torch.FloatTensor(terrain).unsqueeze(0).unsqueeze(0).to(device)
             mu, pi, _, _ = self.actor(state, compute_log_pi=False, terrain=terrain)
             return pi.cpu().data.numpy().flatten()
  
     def train(self, replay_buffer, deterministic, batch_size=100):
         self.total_it += 1
 
-        state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
+        state, action, next_state, reward, not_done, terrain, next_terrain = replay_buffer.sample(batch_size)
     
         with torch.no_grad():
-            _, policy_action, log_pi, _ = self.actor(next_state)
-            target_Q1, target_Q2 = self.critic_target(next_state, policy_action)
+            _, policy_action, log_pi, _ = self.actor(next_state, terrain=next_terrain)
+            target_Q1, target_Q2 = self.critic_target(next_state, policy_action, terrain=next_terrain)
             target_V = torch.min(target_Q1, target_Q2) - self.alpha.detach() * log_pi
             target_Q = reward + (not_done * self.discount * target_V)
 
         # get current Q estimates
-        current_Q1, current_Q2 = self.critic(state, action)
+        current_Q1, current_Q2 = self.critic(state, action, terrain=terrain)
         critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
 
 
@@ -280,8 +282,8 @@ class SAC(object):
 
 
         if self.total_it % self.policy_freq == 0:
-            _, pi, log_pi, log_std = self.actor(state)
-            actor_Q1, actor_Q2 = self.critic(state, pi)
+            _, pi, log_pi, log_std = self.actor(state, terrain=terrain)
+            actor_Q1, actor_Q2 = self.critic(state, pi, terrain=terrain, detach=True)
 
             actor_Q = torch.min(actor_Q1, actor_Q2)
             actor_loss = (self.alpha.detach() * log_pi - actor_Q).mean()

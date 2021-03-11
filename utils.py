@@ -5,73 +5,12 @@ import os
 import logging
 import imageio
 from dm_control.mujoco.wrapper import mjbindings
-
-class ReplayBuffer(object):
-    def __init__(self, state_dim, action_dim, max_size=int(1e6)):
-        self.max_size = max_size
-        self.ptr = 0
-        self.size = 0
-
-        self.state = np.zeros((max_size, state_dim))
-        self.action = np.zeros((max_size, action_dim))
-        self.next_state = np.zeros((max_size, state_dim))
-        self.reward = np.zeros((max_size, 1))
-        self.not_done = np.zeros((max_size, 1))
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    def add(self, state, action, next_state, reward, done):
-        self.state[self.ptr] = state
-        self.action[self.ptr] = action
-        self.next_state[self.ptr] = next_state
-        self.reward[self.ptr] = reward
-        self.not_done[self.ptr] = 1. - done
-
-        self.ptr = (self.ptr + 1) % self.max_size
-        self.size = min(self.size + 1, self.max_size)
-
-    def sample(self, batch_size, curriculum):
-        # if curriculum:
-        #     ind = np.random.randint(self.ptr - 200000, self.ptr, size=batch_size)
-        # else:
-        #     ind = np.random.randint(0, self.size, size=batch_size)
-
-        ind = np.random.randint(0, self.size, size=batch_size)
-
-        return (
-            torch.FloatTensor(self.state[ind]).to(self.device),
-            torch.FloatTensor(self.action[ind]).to(self.device),
-            torch.FloatTensor(self.next_state[ind]).to(self.device),
-            torch.FloatTensor(self.reward[ind]).to(self.device),
-            torch.FloatTensor(self.not_done[ind]).to(self.device)
-        )
-    
-    def save(self, filename):
-        data = {
-            'state': self.state,
-            'action': self.action,
-            'next_state': self.next_state,
-            'reward': self.reward,
-            'not_done': self.not_done,
-            'ptr': self.ptr,
-            'size': self.size
-        }
-        np.savez(filename,**data)
-
-    def load(self, filename):
-        # with np.load(filename) as data:
-        data = np.load(filename)
-        self.state = data['state']
-        self.action = data['action']
-        self.next_state = data['next_state']
-        self.not_done = data['not_done']
-        self.ptr = data['ptr']
-        self.size = data['size']
         
 
 class ReplayBuffer(object):
-    def __init__(self, state_dim, action_dim, max_size=int(1e6)):
+    def __init__(self, state_dim, action_dim, args, max_size=int(1e6)):
         self.max_size = max_size
+        self.args = args
         self.ptr = 0
         self.size = 0
 
@@ -80,15 +19,21 @@ class ReplayBuffer(object):
         self.next_state = np.zeros((max_size, state_dim))
         self.reward = np.zeros((max_size, 1))
         self.not_done = np.zeros((max_size, 1))
+        if self.args.add_terrain:
+            self.terrain = np.zeros((max_size, self.args.heightfield_dim, self.args.heightfield_dim))
+            self.next_terrain = np.zeros_like(self.terrain)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def add(self, state, action, next_state, reward, done):
-        self.state[self.ptr] = state
+        self.state[self.ptr] = state["scalar"]
         self.action[self.ptr] = action
-        self.next_state[self.ptr] = next_state
+        self.next_state[self.ptr] = next_state["scalar"]
         self.reward[self.ptr] = reward
         self.not_done[self.ptr] = 1. - done
+        if self.args.add_terrain:
+            self.terrain[self.ptr] = state["terrain"]
+            self.next_terrain[self.ptr] = state["terrain"]
 
         self.ptr = (self.ptr + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
@@ -101,7 +46,11 @@ class ReplayBuffer(object):
             torch.FloatTensor(self.action[ind]).to(self.device),
             torch.FloatTensor(self.next_state[ind]).to(self.device),
             torch.FloatTensor(self.reward[ind]).to(self.device),
-            torch.FloatTensor(self.not_done[ind]).to(self.device)
+            torch.FloatTensor(self.not_done[ind]).to(self.device),
+            torch.FloatTensor(self.terrain[ind]).unsqueeze(1).to(self.device)\
+                 if self.args.add_terrain else None,
+            torch.FloatTensor(self.next_terrain[ind]).unsqueeze(1).to(self.device)\
+                 if self.args.add_terrain else None,
         )
     
     def save(self, filename):
