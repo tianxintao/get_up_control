@@ -246,7 +246,8 @@ class SAC(object):
     def select_action(self, state, terrain=None):
         with torch.no_grad():
             state = torch.FloatTensor(state.reshape(1, -1)).to(device)
-            terrain = torch.FloatTensor(terrain).unsqueeze(0).unsqueeze(0).to(device)
+            if terrain is not None:
+                terrain = torch.FloatTensor(terrain).unsqueeze(0).unsqueeze(0).to(device)
             mu, _, _, _ = self.actor(
                 state, compute_pi=False, compute_log_pi=False, terrain=terrain
             )
@@ -255,7 +256,8 @@ class SAC(object):
     def sample_action(self, state, terrain=None):
         with torch.no_grad():
             state = torch.FloatTensor(state.reshape(1, -1)).to(device)
-            terrain = torch.FloatTensor(terrain).unsqueeze(0).unsqueeze(0).to(device)
+            if terrain is not None:
+                terrain = torch.FloatTensor(terrain).unsqueeze(0).unsqueeze(0).to(device)
             mu, pi, _, _ = self.actor(state, compute_log_pi=False, terrain=terrain)
             return pi.cpu().data.numpy().flatten()
  

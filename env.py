@@ -210,7 +210,7 @@ class HumanoidStandupEnv():
         between_limit = np.logical_and(joint_angle>joint_limit[:,0], joint_angle<joint_limit[:,1])
         joint_limit_cost = np.where(between_limit, 1, 0).mean()
 
-        return self._standing * upright * self._standing * self._dont_move
+        return self._standing * upright * self._small_control * self._dont_move
 
 
 class HumanoidStandupRandomEnv(HumanoidStandupEnv):
