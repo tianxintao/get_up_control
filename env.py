@@ -200,17 +200,24 @@ class HumanoidStandupEnv():
         return rewards.tolerance(horizontal_velocity, bounds=[-0.3, 0.3], margin=1.2).mean()
 
     @property
+    def _slow_motion(self):
+        if not self.args.velocity_penalty:
+            return 1.0
+        else:
+            if self.physics.center_of_mass_velocity()[2] >= 0.5:
+                control_val = rewards.tolerance(self.physics.velocity()[6:], margin=20,
+                                            value_at_margin=0.05,
+                                            sigmoid='quadratic').mean()
+                return (3 + control_val) / 4
+            return 1.0
+
+    @property
     def _reward(self):
         upright = rewards.tolerance(self.physics.torso_upright(),
                                     bounds=(0.9, float('inf')), sigmoid='linear',
                                     margin=1.9, value_at_margin=0)
 
-        joint_limit = self.physics.model.jnt_range[1:]
-        joint_angle = self.physics.data.qpos[7:].copy()
-        between_limit = np.logical_and(joint_angle>joint_limit[:,0], joint_angle<joint_limit[:,1])
-        joint_limit_cost = np.where(between_limit, 1, 0).mean()
-
-        return self._standing * upright * self._small_control * self._dont_move
+        return self._standing * upright * self._dont_move * self._slow_motion
 
 
 class HumanoidStandupRandomEnv(HumanoidStandupEnv):

@@ -34,6 +34,7 @@ def main():
     parser.add_argument('--debug', default=False, action='store_true')
     parser.add_argument('--scheduler', default=False, action='store_true')
     parser.add_argument('--test_policy', default=False, action='store_true')
+    parser.add_argument('--velocity_penalty', default=False, action='store_true')
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--power", default=1.0, type=float)
     parser.add_argument("--power_end", default=0.4, type=float)
@@ -64,6 +65,7 @@ def main():
     parser.add_argument("--start_timesteps", default=10000, type=int)
 
     # PPO hyperparameters
+    # Deprecated: used for mountain car problems
     parser.add_argument('--steps_per_epoch', type=int, default=1000, help='Number of env steps to run during optimizations')
     parser.add_argument('--lam', type=float, default=0.98, help='GAE-lambda factor')
     parser.add_argument('--train_pi_iters', type=int, default=4)
@@ -139,9 +141,9 @@ def main():
             critic_target_update_freq=args.critic_target_update_freq,
             args=args)
         if args.load_dir:
-            env.power_base = 1.0
+            env.power_base = 0.4
             # buf.load(os.path.join(args.load_dir+'/buffer','checkpoint.npz'))
-            policy.load(os.path.join(args.load_dir+'/model','best_model'),load_optimizer=True)
+            policy.load(os.path.join(args.load_dir+'/model','checkpoint'),load_optimizer=True)
         train_sac(policy, env, tb, logger, buf, args, video_dir, buffer_dir, model_dir, act_dim)
 
 
@@ -230,7 +232,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
 
 
     
-
+# Deprecated: used for mountain car problems
 def train_ppo(policy,env,tb,logger,buf,args,video_dir):
     o, ep_ret, ep_len = env.reset(), 0, 0
 
