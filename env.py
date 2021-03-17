@@ -137,6 +137,7 @@ class HumanoidStandupEnv():
         self.obs = self.env._task.get_observation(self.env._physics)
         self._step_num = 0
         self.terminal_signal = False
+        # self.velocity_record = []
         if not test_time: self.sample_power()
         return self._state
 
@@ -201,15 +202,19 @@ class HumanoidStandupEnv():
 
     @property
     def _slow_motion(self):
-        if not self.args.velocity_penalty:
-            return 1.0
-        else:
-            if self.physics.center_of_mass_velocity()[2] >= 0.5:
-                control_val = rewards.tolerance(self.physics.velocity()[6:], margin=20,
-                                            value_at_margin=0.05,
-                                            sigmoid='quadratic').mean()
-                return (3 + control_val) / 4
-            return 1.0
+        # if not self.args.velocity_penalty:
+        #     return 1.0
+        # else:
+        #     if self.physics.center_of_mass_velocity()[2] >= 0.5:
+        #         self.velocity_record.append(np.abs(self.physics.velocity()[6:]).mean())
+        #         control_val = rewards.tolerance(self.physics.velocity()[6:], margin=10,
+        #                                     value_at_margin=0.1,
+        #                                     sigmoid='quadratic').mean()
+        #         return (3 + control_val) / 4
+        #     return 1.0
+        if not self.args.velocity_penalty or self.physics.center_of_mass_velocity()[2] < 0.5:
+            return 0.0
+        return 0.1 * np.abs(self.physics.velocity()[6:]).mean()
 
     @property
     def _reward(self):
@@ -217,7 +222,7 @@ class HumanoidStandupEnv():
                                     bounds=(0.9, float('inf')), sigmoid='linear',
                                     margin=1.9, value_at_margin=0)
 
-        return self._standing * upright * self._dont_move * self._slow_motion
+        return self._standing * upright * self._dont_move - self._slow_motion
 
 
 class HumanoidStandupRandomEnv(HumanoidStandupEnv):
