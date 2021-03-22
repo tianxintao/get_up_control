@@ -331,7 +331,13 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
         torso_frame = self.physics.named.data.xmat['torso'].reshape(3, 3)
         dist_to_chair = (self.bench_center - torso_pos).dot(torso_frame)
         _state.append(dist_to_chair)
-
+        
+        _state.append(self.physics.named.data.sensordata['right_left_foot_touch'])
+        _state.append(self.physics.named.data.sensordata['left_left_foot_touch'])
+        _state.append(self.physics.named.data.sensordata['right_right_foot_touch'])
+        _state.append(self.physics.named.data.sensordata['left_right_foot_touch'])
+        _state.append(self.physics.named.data.sensordata['right_hand_touch'])
+        _state.append(self.physics.named.data.sensordata['left_hand_touch'])
         _state.append(self.physics.named.data.sensordata['butt_touch'])
 
         _state.append([self.power])

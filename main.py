@@ -182,7 +182,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
 
         # Train agent after collecting sufficient data
         if t >= args.start_timesteps and not args.test_policy:
-            policy.train(replay_buffer, deterministic, args.batch_size)
+            policy.train(replay_buffer, curriculum, args.batch_size)
 
 
         if done:
@@ -198,6 +198,8 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
                 console_output += "|A_Loss: {:.3f}".format(np.array(policy.actor_loss).mean())
                 console_output += "|T_Loss: {:.3f}".format(np.array(policy.temperature_loss).mean())
                 console_output += "|T: {:.3f}".format(np.array(policy.temperature).mean())
+                # console_output += "|G_mean: {:.3f}".format(np.array(policy.grad).mean())
+                # console_output += "|G_max: {:.3f}".format(np.array(policy.grad).max())
                 policy.reset_record()
             # Reset environment
             logger.info(console_output)

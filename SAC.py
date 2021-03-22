@@ -238,6 +238,7 @@ class SAC(object):
         self.actor_loss = []
         self.temperature_loss = []
         self.temperature = []
+        self.grad = []
 
     @property
     def alpha(self):
@@ -261,10 +262,10 @@ class SAC(object):
             mu, pi, _, _ = self.actor(state, compute_log_pi=False, terrain=terrain)
             return pi.cpu().data.numpy().flatten()
  
-    def train(self, replay_buffer, deterministic, batch_size=100):
+    def train(self, replay_buffer, curriculum, batch_size=100):
         self.total_it += 1
 
-        state, action, next_state, reward, not_done, terrain, next_terrain = replay_buffer.sample(batch_size)
+        state, action, next_state, reward, not_done, terrain, next_terrain = replay_buffer.sample(batch_size, curriculum)
     
         with torch.no_grad():
             _, policy_action, log_pi, _ = self.actor(next_state, terrain=next_terrain)
@@ -280,6 +281,9 @@ class SAC(object):
         # Optimize the critic
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
+        # if self.args.debug:
+        #     for param in self.critic.parameters():
+        #         self.grad.append(torch.norm(param.grad.detach().cpu().flatten()))
         self.critic_optimizer.step()
 
 

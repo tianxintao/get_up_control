@@ -13,9 +13,9 @@
       <geom  type="capsule" condim="1" friction=".7" solimp=".9 .99 .003" solref=".015 1" material="self"/>
       <joint type="hinge" damping=".2" stiffness="1" armature=".01" limited="true" solimplimit="0 .99 .01"/>
       <default class="big_joint">
-        <joint damping="5" stiffness="3"/>
+        <joint damping="5" stiffness="5"/>
         <default class="big_stiff_joint">
-          <joint stiffness="3"/>
+          <joint stiffness="10"/>
         </default>
       </default>
       <site size=".04" group="3"/>
