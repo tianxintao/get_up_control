@@ -4,6 +4,7 @@ import scipy.signal
 import os
 import logging
 import imageio
+from dm_control.utils import rewards
 from dm_control.mujoco.wrapper import mjbindings
         
 
@@ -13,6 +14,8 @@ class ReplayBuffer(object):
         self.args = args
         self.ptr = 0
         self.size = 0
+        if self.args.velocity_penalty:
+            self.penalty_coeff = 0.0
 
         self.state = np.zeros((max_size, state_dim))
         self.action = np.zeros((max_size, action_dim))
@@ -40,12 +43,18 @@ class ReplayBuffer(object):
 
     def sample(self, batch_size, curriculum):
         ind = np.random.randint(0, self.size, size=batch_size)
-
+        if self.args.velocity_penalty:
+            modified_reward = self.reward[ind]
+            vel_bool = self.state[ind][:,42] > 0.5
+            penalty = 0.5 * np.abs(self.state[ind][:,40:67]).mean(axis=1)
+            modified_reward[vel_bool] -= (penalty[vel_bool] * self.penalty_coeff).reshape((-1,1))
+            
         return (
             torch.FloatTensor(self.state[ind]).to(self.device),
             torch.FloatTensor(self.action[ind]).to(self.device),
             torch.FloatTensor(self.next_state[ind]).to(self.device),
-            torch.FloatTensor(self.reward[ind]).to(self.device),
+            torch.FloatTensor(self.reward[ind]).to(self.device)\
+                 if not self.args.velocity_penalty else torch.FloatTensor(modified_reward).to(self.device),
             torch.FloatTensor(self.not_done[ind]).to(self.device),
             torch.FloatTensor(self.terrain[ind]).unsqueeze(1).to(self.device)\
                  if self.args.add_terrain else None,

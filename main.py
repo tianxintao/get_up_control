@@ -215,16 +215,17 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
             if len(video) != 0:
                 imageio.mimsave(os.path.join(video_dir, 't_{}.mp4'.format(t)), video, fps=30)
             save_checkpoint = env.adjust_power(min_test_reward)
-            curriculum = env.power_base > args.power_end and env.power_base < args.power
-            logger.info("-------------------------------------------------")
-            logger.info("Evaluation over 10 episodes: {:.3f}, minimum reward: {:.3f} Curriculum: {}".\
-                format(test_reward, min_test_reward, curriculum))
-            logger.info("-------------------------------------------------")
-            logger.info("Current power: {:.3f}".format(env.power_base))
             if(test_reward > best_reward):
                 policy.save(os.path.join(model_dir,'best_model'))
                 best_reward = test_reward
                 logger.info("Best model saved")
+            if args.velocity_penalty: replay_buffer.penalty_coeff = max(best_reward - 200, 0)/600
+            curriculum = env.power_base > args.power_end and env.power_base < args.power
+            logger.info("-------------------------------------------------")
+            logger.info("Evaluation over 10 episodes: {:.3f}, minimum reward: {:.3f}, Curriculum: {}, Penalty: {:.3f}".\
+                format(test_reward, min_test_reward, curriculum, replay_buffer.penalty_coeff))
+            logger.info("-------------------------------------------------")
+            logger.info("Current power: {:.3f}".format(env.power_base))
             if (save_checkpoint):
                 replay_buffer.save(os.path.join(buffer_dir,'checkpoint'))
                 policy.save(os.path.join(model_dir,'checkpoint'))

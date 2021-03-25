@@ -200,21 +200,21 @@ class HumanoidStandupEnv():
         horizontal_velocity = self.physics.center_of_mass_velocity()[[0, 1]]
         return rewards.tolerance(horizontal_velocity, bounds=[-0.3, 0.3], margin=1.2).mean()
 
-    @property
-    def _slow_motion(self):
-        # if not self.args.velocity_penalty:
-        #     return 1.0
-        # else:
-        #     if self.physics.center_of_mass_velocity()[2] >= 0.5:
-        #         self.velocity_record.append(np.abs(self.physics.velocity()[6:]).mean())
-        #         control_val = rewards.tolerance(self.physics.velocity()[6:], margin=10,
-        #                                     value_at_margin=0.1,
-        #                                     sigmoid='quadratic').mean()
-        #         return (3 + control_val) / 4
-        #     return 1.0
-        if not self.args.velocity_penalty or self.physics.center_of_mass_velocity()[2] < 0.5:
-            return 0.0
-        return 0.1 * np.abs(self.physics.velocity()[6:]).mean()
+    # @property
+    # def _slow_motion(self):
+    #     # if not self.args.velocity_penalty:
+    #     #     return 1.0
+    #     # else:
+    #     #     if self.physics.center_of_mass_velocity()[2] >= 0.5:
+    #     #         self.velocity_record.append(np.abs(self.physics.velocity()[6:]).mean())
+    #     #         control_val = rewards.tolerance(self.physics.velocity()[6:], margin=10,
+    #     #                                     value_at_margin=0.1,
+    #     #                                     sigmoid='quadratic').mean()
+    #     #         return (3 + control_val) / 4
+    #     #     return 1.0
+    #     if not self.args.velocity_penalty or self.physics.center_of_mass_velocity()[2] < 0.5:
+    #         return 0.0
+    #     return 0.1 * np.abs(self.physics.velocity()[6:]).mean()
 
     @property
     def _reward(self):
@@ -222,7 +222,7 @@ class HumanoidStandupEnv():
                                     bounds=(0.9, float('inf')), sigmoid='linear',
                                     margin=1.9, value_at_margin=0)
 
-        return self._standing * upright * self._dont_move - self._slow_motion
+        return self._standing * upright * self._dont_move
 
 
 class HumanoidStandupRandomEnv(HumanoidStandupEnv):
