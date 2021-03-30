@@ -25,10 +25,12 @@ class ReplayBuffer(object):
         if self.args.add_terrain:
             self.terrain = np.zeros((max_size, self.args.heightfield_dim, self.args.heightfield_dim))
             self.next_terrain = np.zeros_like(self.terrain)
+        if self.args.predict_force:
+            self.force = np.zeros((max_size, self.args.force_dim))
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def add(self, state, action, next_state, reward, done):
+    def add(self, state, action, next_state, reward, done, reaction_force):
         self.state[self.ptr] = state["scalar"]
         self.action[self.ptr] = action
         self.next_state[self.ptr] = next_state["scalar"]
@@ -37,6 +39,8 @@ class ReplayBuffer(object):
         if self.args.add_terrain:
             self.terrain[self.ptr] = state["terrain"]
             self.next_terrain[self.ptr] = state["terrain"]
+        if self.args.predict_force:
+            self.force[self.ptr] = reaction_force
 
         self.ptr = (self.ptr + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
@@ -60,6 +64,8 @@ class ReplayBuffer(object):
                  if self.args.add_terrain else None,
             torch.FloatTensor(self.next_terrain[ind]).unsqueeze(1).to(self.device)\
                  if self.args.add_terrain else None,
+            torch.FloatTensor(self.force[ind]).to(self.device)\
+                 if self.args.predict_force else None,
         )
     
     def save(self, filename):

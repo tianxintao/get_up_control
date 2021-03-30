@@ -92,6 +92,25 @@ class Actor(nn.Module):
 
         return mu, pi, log_pi, log_std
 
+class ContactPredictor(nn.Module):
+    
+    def __init__(self, state_dim, action_dim, output_dim):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(state_dim + action_dim, 128), nn.ReLU(),
+            nn.Linear(128, 128), nn.ReLU(),
+            nn.Linear(128, output_dim)
+        )
+
+    def predict_force(self, state, action, detach):
+        state_action = torch.cat([state, action], dim=1)
+        logits = self.layers(state_action)
+		
+        if detach:
+            f1 = logits.detach()
+
+        return logits
+    
 class Critic(nn.Module):
     """Critic network, employes two q-functions."""
     def __init__(self, state_dim, action_dim, encoder):
@@ -121,6 +140,47 @@ class Critic(nn.Module):
         q2 = self.Q2(state_action)
 
         return q1, q2
+
+# class Critic(nn.Module):
+#     """Critic network, employes two q-functions."""
+#     def __init__(self, state_dim, action_dim, encoder):
+#         super().__init__()
+#         self.encoder = encoder
+#         self.feature1 = nn.Sequential(
+#             nn.Linear(state_dim + action_dim, 1024), nn.ReLU(),
+#             nn.Linear(1024, 1024), nn.ReLU()
+#         )
+#         self.ln1 = nn.Linear(1024, 1)
+#
+#         self.feature2 = nn.Sequential(
+#             nn.Linear(state_dim + action_dim, 1024), nn.ReLU(),
+#             nn.Linear(1024, 1024), nn.ReLU(),
+#         )
+#         self.ln2 = nn.Linear(1024, 1)
+#
+#         self.apply(weight_init)
+#
+#     # def predict_force(self, state, action, detach):
+#     #     state_action = torch.cat([state, action], dim=1)
+#     #     f1 = self.f1(self.feature1(state_action))
+#     #     f2 = self.f2(self.feature2(state_action))
+#
+#     #     if detach:
+#     #         f1 = f1.detach()
+#     #         f2 = f2.detach()
+#
+#     #     return f1, f2
+#
+#     def forward(self, state, action, terrain=None, detach=False):
+#         # detach_encoder allows to stop gradient propogation to encoder
+#         if terrain is not None:
+#             terrain_encoded = self.encoder(terrain, detach=detach)
+#             state = torch.cat([state, terrain_encoded], dim=1)
+#         state_action = torch.cat([state, action], dim=1)
+#         q1 = self.ln1(self.feature1(state_action))
+#         q2 = self.ln2(self.feature2(state_action))
+#
+#         return q1, q2
 
 
 class Encoder(nn.Module):
@@ -181,14 +241,22 @@ class SAC(object):
         self.policy_freq = policy_freq
         self.critic_target_update_freq = critic_target_update_freq
         self.encoder = None
+        self.reward_avg = 0.0
+        self.avg_force_loss = 0.0
 
         if self.args.add_terrain:
             state_dim = state_dim + self.args.terrain_dim
-            self.encoder = Encoder(self.args.heightfield_dim, self.args.terrain_dim)
+            self.encoder = Encoder(self.args.heightfield_dim, self.args.terrain_dim).to(device)
 
         self.actor = Actor(state_dim, action_dim, actor_log_std_min, actor_log_std_max, args.original, self.encoder).to(device)
 
         self.critic = Critic(state_dim, action_dim, self.encoder).to(device)
+
+        if self.args.predict_force:
+            self.force_network = ContactPredictor(state_dim, action_dim, self.args.force_dim).to(device)
+            self.force_optimizer = torch.optim.Adam(
+                self.force_network.parameters(), lr=1e-4
+            )
 
         self.critic_target = copy.deepcopy(self.critic)
 
@@ -239,6 +307,7 @@ class SAC(object):
         self.temperature_loss = []
         self.temperature = []
         self.grad = []
+        self.reaction_force_loss = []
 
     @property
     def alpha(self):
@@ -265,18 +334,28 @@ class SAC(object):
     def train(self, replay_buffer, curriculum, batch_size=100):
         self.total_it += 1
 
-        state, action, next_state, reward, not_done, terrain, next_terrain = replay_buffer.sample(batch_size, curriculum)
-    
+        state, action, next_state, reward, not_done, terrain, next_terrain, reaction_force = replay_buffer.sample(batch_size, curriculum)
+
+        if self.args.predict_force:
+            predicted_f = self.force_network.predict_force(state, action, detach=False)
+            force_loss = F.mse_loss(predicted_f, reaction_force)
+            self.force_optimizer.zero_grad()
+            force_loss.backward()
+            self.force_optimizer.step()
+            self.avg_force_loss = self.avg_force_loss * 0.99 + force_loss.item() * 0.01
+
         with torch.no_grad():
             _, policy_action, log_pi, _ = self.actor(next_state, terrain=next_terrain)
             target_Q1, target_Q2 = self.critic_target(next_state, policy_action, terrain=next_terrain)
             target_V = torch.min(target_Q1, target_Q2) - self.alpha.detach() * log_pi
             target_Q = reward + (not_done * self.discount * target_V)
+            self.reward_avg = self.reward_avg * 0.99 + reward.mean() * 0.01
+            if self.args.predict_force:
+                target_Q += (force_loss.detach()/self.avg_force_loss) * self.reward_avg * 0.05
 
         # get current Q estimates
         current_Q1, current_Q2 = self.critic(state, action, terrain=terrain)
         critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
-
 
         # Optimize the critic
         self.critic_optimizer.zero_grad()
@@ -318,6 +397,8 @@ class SAC(object):
             self.critic_loss.append(critic_loss.item())
             self.actor_loss.append(actor_loss.item())
             self.temperature_loss.append(alpha_loss.item())
+            if self.args.predict_force:
+                self.reaction_force_loss.append(force_loss.item())
             self.temperature.append(self.alpha.item())
 
 
@@ -331,6 +412,10 @@ class SAC(object):
 
         torch.save(self.log_alpha, filename + "_log_alpha.pt")
         torch.save(self.log_alpha_optimizer.state_dict(), filename + "_log_alpha_optimizer.pt")
+
+        if self.args.predict_force:
+            torch.save(self.force_network.state_dict(), filename + "_force.pt")
+            torch.save(self.force_optimizer.state_dict(), filename + "_force_optimizer.pt")
 
     def load(self, filename, load_optimizer=False):
         self.critic.load_state_dict(torch.load(filename + "_critic.pt"))

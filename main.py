@@ -12,7 +12,7 @@ from tensorboardX import SummaryWriter
 from PPO import PPO
 from SAC import SAC
 from torch.utils.tensorboard import SummaryWriter
-from env import CustomMountainCarEnv, HumanoidStandupEnv, HumanoidStandupRandomEnv, HumanoidBenchEnv
+from env import CustomMountainCarEnv, HumanoidStandupEnv, HumanoidStandupRandomEnv, HumanoidBenchEnv, Humanoid2DStandupEnv
 from utils import PGBuffer, ReplayBuffer
 import argparse
 
@@ -25,10 +25,12 @@ def env_function(args):
         return HumanoidStandupRandomEnv
     elif args.env == "HumanoidBench":
         return HumanoidBenchEnv
+    elif args.env == "Humanoid2DStandup":
+        return Humanoid2DStandupEnv
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='HumanoidStandup', choices=['HumanoidStandup','HumanoidRandom','HumanoidBench','MountainCarContinuous-v0'])
+    parser.add_argument('--env', type=str, default='HumanoidStandup', choices=['HumanoidStandup', 'Humanoid2DStandup', 'HumanoidRandom','HumanoidBench','MountainCarContinuous-v0'])
     parser.add_argument("--policy", default="SAC",choices=['SAC', 'PPO'])
     parser.add_argument('--original', default=False, action='store_true', help='if set true, use the default power/strength parameters')
     parser.add_argument('--debug', default=False, action='store_true')
@@ -52,6 +54,10 @@ def main():
     parser.add_argument('--add_terrain', default=False, action='store_true')
     parser.add_argument('--terrain_dim', default=16, type=int)
     parser.add_argument('--heightfield_dim', default=9, type=int)
+
+    # Force/contact hypeparameters
+    parser.add_argument("--predict_force", action="store_true")
+    parser.add_argument("--force_dim", type=int, default=1)
 
     # SAC hyperparameters
     parser.add_argument("--batch_size", default=1024, type=int)
@@ -166,16 +172,16 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
             action = policy.sample_action(np.array(state["scalar"]), terrain=state["terrain"])
 
 
-        next_state, reward, done, _ = env.step(a=action)
+        next_state, reward, done, reaction_force = env.step(a=action)
 
         if args.test_policy:
             cv2.imshow('image',env.render())
-            cv2.waitKey(1)
+            cv2.waitKey(10)
 
         episode_timesteps += 1
 
         # Store data in replay buffer
-        replay_buffer.add(state, action, next_state, reward, env.terminal_signal)
+        replay_buffer.add(state, action, next_state, reward, env.terminal_signal, reaction_force)
 
         state = next_state
         episode_reward += reward
@@ -198,6 +204,8 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
                 console_output += "|A_Loss: {:.3f}".format(np.array(policy.actor_loss).mean())
                 console_output += "|T_Loss: {:.3f}".format(np.array(policy.temperature_loss).mean())
                 console_output += "|T: {:.3f}".format(np.array(policy.temperature).mean())
+                if args.predict_force:
+                    console_output += "|F_Loss: {:.3f}".format(np.array(policy.reaction_force_loss).mean())
                 # console_output += "|G_mean: {:.3f}".format(np.array(policy.grad).mean())
                 # console_output += "|G_max: {:.3f}".format(np.array(policy.grad).max())
                 policy.reset_record()
@@ -208,7 +216,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
             episode_timesteps = 0
             episode_num += 1
 
-        if t % args.test_interval == 0:
+        if t % args.test_interval == 0 and not args.test_policy:
             test_reward, min_test_reward, video = run_tests(policy, env, args, True)
             tb.add_scalar("Test/Alpha", env.power_base, t)
             tb.add_scalar("Test/Reward", test_reward, t)
@@ -292,13 +300,14 @@ def run_tests(policy, train_env, args, video_tag):
     # test_env.seed(args.seed + 10)
     test_env.set_power(train_env.export_power())
     test_reward = []
+    video_index = np.random.random_integers(0, args.test_iterations-1)
     video = []
     for i in range(args.test_iterations):
         state, done = test_env.reset(test_time=True), False
         episode_reward = 0
         while not done:
             action = policy.select_action(np.array(state["scalar"]), terrain=state["terrain"])
-            if i==0 and video_tag:
+            if i==video_index and video_tag:
                 video.append(test_env.render(mode="rgb_array"))
             state, reward, done, _ = test_env.step(action)
             episode_reward += reward

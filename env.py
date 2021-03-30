@@ -1,8 +1,10 @@
 from gym.envs.classic_control.continuous_mountain_car import Continuous_MountainCarEnv
 from gym.utils import seeding
-from dm_control import suite
+from dm_control import suite, mujoco
 from dm_control.suite.base import Task
 from dm_control.utils import rewards
+from dm_control.suite.humanoid import Humanoid, Physics
+from dm_control.rl import control
 import os
 import numpy as np
 import math
@@ -114,7 +116,10 @@ class HumanoidStandupEnv():
         if self.original: a = a * self.power
         self.timestep = self.env.step(a)
         self.obs = self.timestep.observation
-        return self._state, self._reward, self._done, self.timestep
+        mujoco.engine.mjlib.mj_rnePostConstraint(self.physics.model.ptr, self.physics.data.ptr)
+        # print(self._reaction_force, self.physics.data.ncon)
+        reaction_force = self._reaction_force if self.args.predict_force else None
+        return self._state, self._reward, self._done, reaction_force
 
     def reset(self, test_time=False):
         if self.custom_reset:
@@ -126,8 +131,8 @@ class HumanoidStandupEnv():
             while repeat:
                 self.env.reset()
                 with self.physics.reset_context():
-                    self.physics.named.data.qpos[:3] = [0, 0, 0.5]
-                    self.physics.named.data.qpos[3:7] = [0.707, 0, -1, 0]
+                    self.physics.named.data.qpos[:3] = [0, 0, 0.8]
+                    self.physics.named.data.qpos[3:7] = [0.7071, 0.7071, 0, 0]
                     self.physics.after_reset()
                 if self.physics.data.ncon == 0: repeat = False
         else:
@@ -142,7 +147,7 @@ class HumanoidStandupEnv():
         return self._state
 
     def render(self, mode=None):
-        return self.env.physics.render(height=128, width=128, camera_id=0)
+        return self.env.physics.render(height=128, width=128, camera_id=1)
 
     def sample_power(self, std=0.02):
         if np.abs(self.power_base - self.power_end) <= 1e-3 or self.original:
@@ -171,6 +176,7 @@ class HumanoidStandupEnv():
         for part in self.obs.values():
             _state.append(part if not np.isscalar(part) else [part])
         _state.append([self.power])
+        # print("velocity_z:{}, velocity:{}".format(np.concatenate(_state)[42],np.abs(np.concatenate(_state)[40:67]).mean()))
         return {
             "scalar": np.concatenate(_state),
             "terrain": None,
@@ -223,6 +229,46 @@ class HumanoidStandupEnv():
                                     margin=1.9, value_at_margin=0)
 
         return self._standing * upright * self._dont_move
+
+
+    @property
+    def _reaction_force(self):
+        reaction_force = 0
+        check_list = []
+        # print("----------------------------------------------------------------------------------")
+        if self.physics.data.ncon > 0:
+            for record in self.physics.data.contact:
+                print("contact between {} and {}, Normal Direction: {}".format(
+                    self.physics.model.id2name(self.physics.model.geom_bodyid[record[-3]], 'body'),
+                    self.physics.model.id2name(self.physics.model.geom_bodyid[record[-4]], 'body'),
+                    record[2][:3]
+                ))
+                if record[-3] == 0 or record[-4] == 0:
+                    body_id = int(self.physics.model.geom_bodyid[record[-3] + record[-4]])
+                    if not body_id in check_list:
+                        reaction_force += self.physics.named.data.cfrc_ext[body_id][-1]
+                        check_list.append(body_id)
+        return min(reaction_force, 1600)/1600
+
+
+class Humanoid2DStandupEnv(HumanoidStandupEnv):
+    def __init__(self, args, seed):
+        physics = Physics.from_xml_path('./data/humanoid_2D.xml')
+        task = Humanoid(move_speed=0, pure_state=False)
+        environment_kwargs = {}
+        self.env = control.Environment(
+                        physics, task, time_limit=1000, control_timestep=.025,
+                        **environment_kwargs)
+        self.args = args
+        self.env._flat_observation = True
+        self.physics = self.env.physics
+        self.custom_reset = args.custom_reset
+        self.power_end = args.power_end
+        self.original = args.original
+        self.power_base = args.power
+        self.reset()
+        self.action_space = self.env.action_spec()
+        self.obs_shape = self._state["scalar"].shape
 
 
 class HumanoidStandupRandomEnv(HumanoidStandupEnv):
@@ -318,8 +364,8 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
         if not test_time: self.sample_power()
         return self._state
 
-    def adjust_power(self, test_reward, threshold=120):
-        return super().adjust_power(test_reward, threshold=120)
+    def adjust_power(self, test_reward, threshold=40):
+        return super().adjust_power(test_reward, threshold=40)
 
     @property
     def _state(self):
@@ -332,12 +378,6 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
         dist_to_chair = (self.bench_center - torso_pos).dot(torso_frame)
         _state.append(dist_to_chair)
         
-        _state.append(self.physics.named.data.sensordata['right_left_foot_touch'])
-        _state.append(self.physics.named.data.sensordata['left_left_foot_touch'])
-        _state.append(self.physics.named.data.sensordata['right_right_foot_touch'])
-        _state.append(self.physics.named.data.sensordata['left_right_foot_touch'])
-        _state.append(self.physics.named.data.sensordata['right_hand_touch'])
-        _state.append(self.physics.named.data.sensordata['left_hand_touch'])
         _state.append(self.physics.named.data.sensordata['butt_touch'])
 
         _state.append([self.power])
@@ -360,7 +400,40 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
     def _standing(self):
         return rewards.tolerance(self.physics.head_height(),
                                  bounds=(self._STAND_HEIGHT, float('inf')),
-                                 margin=self._STAND_HEIGHT / 2)
+                                 margin=self._STAND_HEIGHT / 4)
+
+    @property
+    def _reaction_force(self):
+        reaction_force = 0
+        contact_array = np.zeros(16)
+        check_list = []
+        # print("----------------------------------------------------------------------------------")
+        if self.physics.data.ncon > 0:
+            for record in self.physics.data.contact:
+                # print("contact between {} and {}, Normal Direction: {}".format(
+                #     self.physics.model.id2name(self.physics.model.geom_bodyid[record[-3]], 'body'),
+                #     self.physics.model.id2name(self.physics.model.geom_bodyid[record[-4]], 'body'),
+                #     record[2][:3]
+                # ))
+                # if record[-3] == 0 or record[-4] == 0:
+                #     body_id = int(self.physics.model.geom_bodyid[record[-3] + record[-4]])
+                #     check_list.append(body_id)
+                
+                # if record[-3] == 1 or record[-4] == 1:
+                #     body_id = int(self.physics.model.geom_bodyid[record[-3] + record[-4] - 1])
+                #     check_list.append(body_id)
+                if record[-3] == 0 or record[-4] == 0:
+                    body_id = int(self.physics.model.geom_bodyid[record[-3] + record[-4]])
+                    if not body_id in check_list:
+                        reaction_force += self.physics.named.data.cfrc_ext[body_id][-1]
+                        check_list.append(body_id)
+
+        force_from_bench = self.physics.named.data.cfrc_ext[1][-1] # Body_id 1 responds to bench
+        force_array = np.abs(np.array([reaction_force, force_from_bench])).clip(min=0,max=1600)/1600
+        # index = np.array(list(set(check_list)))
+        # if len(index) > 0:
+        #     contact_array[index-2] = 1
+        return force_array
 
 
 
