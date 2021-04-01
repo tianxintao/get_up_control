@@ -351,7 +351,7 @@ class SAC(object):
             target_Q = reward + (not_done * self.discount * target_V)
             self.reward_avg = self.reward_avg * 0.99 + reward.mean() * 0.01
             if self.args.predict_force:
-                target_Q += (force_loss.detach()/self.avg_force_loss) * self.reward_avg * 0.05
+                target_Q += (force_loss.detach()/self.avg_force_loss) * self.reward_avg * 0.2
 
         # get current Q estimates
         current_Q1, current_Q2 = self.critic(state, action, terrain=terrain)

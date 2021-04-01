@@ -238,11 +238,11 @@ class HumanoidStandupEnv():
         # print("----------------------------------------------------------------------------------")
         if self.physics.data.ncon > 0:
             for record in self.physics.data.contact:
-                print("contact between {} and {}, Normal Direction: {}".format(
-                    self.physics.model.id2name(self.physics.model.geom_bodyid[record[-3]], 'body'),
-                    self.physics.model.id2name(self.physics.model.geom_bodyid[record[-4]], 'body'),
-                    record[2][:3]
-                ))
+                # print("contact between {} and {}, Normal Direction: {}".format(
+                #     self.physics.model.id2name(self.physics.model.geom_bodyid[record[-3]], 'body'),
+                #     self.physics.model.id2name(self.physics.model.geom_bodyid[record[-4]], 'body'),
+                #     record[2][:3]
+                # ))
                 if record[-3] == 0 or record[-4] == 0:
                     body_id = int(self.physics.model.geom_bodyid[record[-3] + record[-4]])
                     if not body_id in check_list:
@@ -407,6 +407,8 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
         reaction_force = 0
         contact_array = np.zeros(16)
         check_list = []
+        body_names = ["right_hand","left_hand","right_foot","left_foot"]
+        body_array = [False] * 4
         # print("----------------------------------------------------------------------------------")
         if self.physics.data.ncon > 0:
             for record in self.physics.data.contact:
@@ -424,16 +426,27 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
                 #     check_list.append(body_id)
                 if record[-3] == 0 or record[-4] == 0:
                     body_id = int(self.physics.model.geom_bodyid[record[-3] + record[-4]])
-                    if not body_id in check_list:
-                        reaction_force += self.physics.named.data.cfrc_ext[body_id][-1]
-                        check_list.append(body_id)
+                    # if not body_id in check_list:
+                    #     reaction_force += self.physics.named.data.cfrc_ext[body_id][-1]
+                    #     check_list.append(body_id)
+                    if body_id == 8: body_array[2] = True
+                    if body_id == 11: body_array[3] = True
 
-        force_from_bench = self.physics.named.data.cfrc_ext[1][-1] # Body_id 1 responds to bench
-        force_array = np.abs(np.array([reaction_force, force_from_bench])).clip(min=0,max=1600)/1600
+                if record[-3] == 1 or record[-4] == 1:
+                    body_id = int(self.physics.model.geom_bodyid[record[-3] + record[-4] - 1]) 
+                    # if not body_id in check_list:
+                    #     reaction_force += self.physics.named.data.cfrc_ext[body_id][-1]
+                    #     check_list.append(body_id)
+                    if body_id == 14: body_array[0] = True
+                    if body_id == 17: body_array[1] = True
+
+        force_array = self.physics.named.data.cfrc_ext[body_names][:,-1] * np.array(body_array).astype(float)
+        # force_from_bench = self.physics.named.data.cfrc_ext[1][-1] # Body_id 1 responds to bench
+        # force_array = np.abs(np.array([reaction_force, force_from_bench])).clip(min=0,max=1600)/1600
         # index = np.array(list(set(check_list)))
         # if len(index) > 0:
         #     contact_array[index-2] = 1
-        return force_array
+        return np.abs(force_array).clip(min=0,max=1600)/1600
 
 
 
