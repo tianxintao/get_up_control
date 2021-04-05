@@ -446,7 +446,7 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
         # index = np.array(list(set(check_list)))
         # if len(index) > 0:
         #     contact_array[index-2] = 1
-        return np.abs(force_array).clip(min=0,max=1600)/1600
+        return np.abs(force_array).clip(min=0,max=[800,800,1600,1600])/np.array([800,800,1600,1600])
 
 
 

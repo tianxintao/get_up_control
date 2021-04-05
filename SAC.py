@@ -286,7 +286,7 @@ class SAC(object):
         self.total_it = 0
 
         if self.args.scheduler:
-            milestones = [10000,50000,200000,1200000]
+            milestones = [10000,50000,200000,500000,1000000,2000000]
             self.actor_scheduler = torch.optim.lr_scheduler.MultiStepLR(
                 self.actor_optimizer,
                 milestones=milestones,

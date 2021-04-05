@@ -18,6 +18,65 @@ import argparse
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+class ArgParserTrain(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument('--env', type=str, default='HumanoidStandup', choices=['HumanoidStandup', 'Humanoid2DStandup', 'HumanoidRandom','HumanoidBench','MountainCarContinuous-v0'])
+        self.add_argument("--policy", default="SAC",choices=['SAC', 'PPO'])
+        self.add_argument('--original', default=False, action='store_true', help='if set true, use the default power/strength parameters')
+        self.add_argument('--debug', default=False, action='store_true')
+        self.add_argument('--scheduler', default=False, action='store_true')
+        self.add_argument('--test_policy', default=False, action='store_true')
+        self.add_argument('--velocity_penalty', default=False, action='store_true')
+        self.add_argument("--seed", default=0, type=int)
+        self.add_argument("--power", default=1.0, type=float)
+        self.add_argument("--power_end", default=0.4, type=float)
+        self.add_argument('--max_timesteps', type=int, default=10000000, help='Number of simulation steps to run')
+        self.add_argument('--test_interval', type=int, default=20000, help='Number of simulation steps between tests')
+        self.add_argument('--test_iterations', type=int, default=10, help='Number of simulation steps between tests')
+        self.add_argument('--replay_buffer_size', type=int, default=1e6, help='Number of simulation steps to run')
+        self.add_argument('--gamma', type=float, default=0.999, help='discount factor')
+        self.add_argument('--max_ep_len', type=int, default=1000)
+        self.add_argument('--custom_reset', default=False, action='store_true')
+        self.add_argument("--work_dir", default='./experiment/')
+        self.add_argument("--load_dir", default=None, type=str)
+
+        # Terrain hyperparameters
+        self.add_argument('--add_terrain', default=False, action='store_true')
+        self.add_argument('--terrain_dim', default=16, type=int)
+        self.add_argument('--heightfield_dim', default=9, type=int)
+
+        # Force/contact hypeparameters
+        self.add_argument("--predict_force", action="store_true")
+        self.add_argument("--force_dim", type=int, default=1)
+
+        # SAC hyperparameters
+        self.add_argument("--batch_size", default=1024, type=int)
+        self.add_argument("--discount", default=0.99)
+        self.add_argument("--init_temperature", default=0.1)
+        self.add_argument("--critic_target_update_freq", default=2, type=int)
+        self.add_argument("--alpha_lr", default=1e-4, type=float)
+        self.add_argument("--actor_lr", default=1e-4, type=float)
+        self.add_argument("--critic_lr", default=1e-4, type=float)
+        self.add_argument("--tau", default=0.005)
+        self.add_argument("--start_timesteps", default=10000, type=int)
+
+        # PPO hyperparameters
+        # Deprecated: used for mountain car problems
+        self.add_argument('--steps_per_epoch', type=int, default=1000, help='Number of env steps to run during optimizations')
+        self.add_argument('--lam', type=float, default=0.98, help='GAE-lambda factor')
+        self.add_argument('--train_pi_iters', type=int, default=4)
+        self.add_argument('--train_v_iters', type=int, default=40)
+        self.add_argument('--pi_lr', type=float, default=3e-4, help='Policy learning rate')
+        self.add_argument('--v_lr', type=float, default=1e-3, help='Value learning rate')
+        self.add_argument('--psi_mode', type=str, default='gae', help='value to modulate logp gradient with [future_return, gae]')
+        self.add_argument('--loss_mode', type=str, default='vpg', help='Loss mode [vpg, ppo]')
+        self.add_argument('--clip_ratio', type=float, default=0.2, help='PPO clipping ratio')
+
+        self.add_argument('--render_interval', type=int, default=100, help='render every N')
+        self.add_argument('--log_interval', type=int, default=100, help='log every N')
+        self.add_argument("--tag", default="")
+
 def env_function(args):
     if args.env == 'HumanoidStandup':
         return HumanoidStandupEnv
@@ -29,65 +88,8 @@ def env_function(args):
         return Humanoid2DStandupEnv
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='HumanoidStandup', choices=['HumanoidStandup', 'Humanoid2DStandup', 'HumanoidRandom','HumanoidBench','MountainCarContinuous-v0'])
-    parser.add_argument("--policy", default="SAC",choices=['SAC', 'PPO'])
-    parser.add_argument('--original', default=False, action='store_true', help='if set true, use the default power/strength parameters')
-    parser.add_argument('--debug', default=False, action='store_true')
-    parser.add_argument('--scheduler', default=False, action='store_true')
-    parser.add_argument('--test_policy', default=False, action='store_true')
-    parser.add_argument('--velocity_penalty', default=False, action='store_true')
-    parser.add_argument("--seed", default=0, type=int)
-    parser.add_argument("--power", default=1.0, type=float)
-    parser.add_argument("--power_end", default=0.4, type=float)
-    parser.add_argument('--max_timesteps', type=int, default=10000000, help='Number of simulation steps to run')
-    parser.add_argument('--test_interval', type=int, default=20000, help='Number of simulation steps between tests')
-    parser.add_argument('--test_iterations', type=int, default=10, help='Number of simulation steps between tests')
-    parser.add_argument('--replay_buffer_size', type=int, default=1e6, help='Number of simulation steps to run')
-    parser.add_argument('--gamma', type=float, default=0.999, help='discount factor')
-    parser.add_argument('--max_ep_len', type=int, default=1000)
-    parser.add_argument('--custom_reset', default=False, action='store_true')
-    parser.add_argument("--work_dir", default='./experiment/')
-    parser.add_argument("--load_dir", default=None, type=str)
-
-    # Terrain hyperparameters
-    parser.add_argument('--add_terrain', default=False, action='store_true')
-    parser.add_argument('--terrain_dim', default=16, type=int)
-    parser.add_argument('--heightfield_dim', default=9, type=int)
-
-    # Force/contact hypeparameters
-    parser.add_argument("--predict_force", action="store_true")
-    parser.add_argument("--force_dim", type=int, default=1)
-
-    # SAC hyperparameters
-    parser.add_argument("--batch_size", default=1024, type=int)
-    parser.add_argument("--discount", default=0.99)
-    parser.add_argument("--init_temperature", default=0.1)
-    parser.add_argument("--critic_target_update_freq", default=2, type=int)
-    parser.add_argument("--alpha_lr", default=1e-4, type=float)
-    parser.add_argument("--actor_lr", default=1e-4, type=float)
-    parser.add_argument("--critic_lr", default=1e-4, type=float)
-    parser.add_argument("--tau", default=0.005)
-    parser.add_argument("--start_timesteps", default=10000, type=int)
-
-    # PPO hyperparameters
-    # Deprecated: used for mountain car problems
-    parser.add_argument('--steps_per_epoch', type=int, default=1000, help='Number of env steps to run during optimizations')
-    parser.add_argument('--lam', type=float, default=0.98, help='GAE-lambda factor')
-    parser.add_argument('--train_pi_iters', type=int, default=4)
-    parser.add_argument('--train_v_iters', type=int, default=40)
-    parser.add_argument('--pi_lr', type=float, default=3e-4, help='Policy learning rate')
-    parser.add_argument('--v_lr', type=float, default=1e-3, help='Value learning rate')
-    parser.add_argument('--psi_mode', type=str, default='gae', help='value to modulate logp gradient with [future_return, gae]')
-    parser.add_argument('--loss_mode', type=str, default='vpg', help='Loss mode [vpg, ppo]')
-    parser.add_argument('--clip_ratio', type=float, default=0.2, help='PPO clipping ratio')
-
-    parser.add_argument('--render_interval', type=int, default=100, help='render every N')
-    parser.add_argument('--log_interval', type=int, default=100, help='log every N')
-    parser.add_argument("--tag", default="")
-
-    args = parser.parse_args()
-
+    args = ArgParserTrain().parse_args()
+    
     if args.add_terrain:
         assert args.env=="HumanoidRandom", "{} environment does not output terrain".format(args.env)
 
@@ -147,7 +149,7 @@ def main():
             critic_target_update_freq=args.critic_target_update_freq,
             args=args)
         if args.load_dir:
-            env.power_base = 0.4
+            env.power_base = args.power
             # buf.load(os.path.join(args.load_dir+'/buffer','checkpoint.npz'))
             policy.load(os.path.join(args.load_dir+'/model','checkpoint'),load_optimizer=True)
         train_sac(policy, env, tb, logger, buf, args, video_dir, buffer_dir, model_dir, act_dim)
@@ -222,7 +224,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
             tb.add_scalar("Test/Reward", test_reward, t)
             if len(video) != 0:
                 imageio.mimsave(os.path.join(video_dir, 't_{}.mp4'.format(t)), video, fps=30)
-            save_checkpoint = env.adjust_power(test_reward)
+            save_checkpoint = env.adjust_power(min_test_reward)
             if(test_reward > best_reward):
                 policy.save(os.path.join(model_dir,'best_model'))
                 best_reward = test_reward
