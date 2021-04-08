@@ -5,6 +5,7 @@ from dm_control.suite.base import Task
 from dm_control.utils import rewards
 from dm_control.suite.humanoid import Humanoid, Physics
 from dm_control.rl import control
+from dm_control.suite import common
 import os
 import numpy as np
 import math
@@ -446,86 +447,27 @@ class HumanoidBenchEnv(HumanoidStandupEnv):
         # index = np.array(list(set(check_list)))
         # if len(index) > 0:
         #     contact_array[index-2] = 1
+        # print(force_array)
+        # print(force_array)
         return np.abs(force_array).clip(min=0,max=[800,800,1600,1600])/np.array([800,800,1600,1600])
 
 
+class HumanoidChairEnv(HumanoidBenchEnv):
+    xml_path = './data/humanoid_chair.xml'
 
+    def __init__(self, args, seed):
+        with open('./data/humanoid_chair.txt', 'r') as reader:
+            self.model_str = reader.read()
+        super().__init__(args, seed)
+        
 
+    def render(self, mode=None):
+        return self.env.physics.render(height=256, width=256, camera_id=1)
 
+    def reset(self, test_time=False):
+        self.physics.reload_from_xml_string(
+            self.model_str.format(handle_height=0.1, handle_position=0.15),
+            common.ASSETS
+        )
+        return super().reset(test_time=test_time)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# class HumanoidBalanceEnv(HumanoidStandupEnv):
-#     _STAND_HEIGHT = 1.4
-#
-#     def __init__(self, original, power=1.0, seed=0, custom_reset=False, power_end=0.4):
-#         self.power = power
-#         HumanoidStandupEnv.__init__(self, original, power, seed, custom_reset, power_end)
-#
-#     def reset(self, test_time=None):
-#
-#         repeat = True
-#         while repeat:
-#             with self.physics.reset_context():
-#                 self.env.reset()
-#                 self.physics.named.data.qpos[:3] = [0, 0, 1.5]
-#                 self.physics.named.data.qpos[3:7] = [1, 0, 0, 0]
-#                 self.physics.after_reset()
-#             if self.physics.data.ncon == 0: repeat = False
-#
-#         self.obs = self.env._task.get_observation(self.physics)
-#         self._step_num = 0
-#         self.terminal_signal = False
-#
-#         return self._state
-#
-#     @property
-#     def _standing(self):
-#         return rewards.tolerance(self.physics.head_height(),
-#                                  bounds=(self._STAND_HEIGHT, float('inf')),
-#                                  margin=self._STAND_HEIGHT / 4)
-#
-#     @property
-#     def _dont_move(self):
-#         horizontal_velocity = self.physics.center_of_mass_velocity()[[0, 1]]
-#         return rewards.tolerance(horizontal_velocity, margin=2).mean()
-#
-#     @property
-#     def _done(self):
-#         if self._step_num >= 1000:
-#             return True
-#         if self.physics.center_of_mass_position()[2] < 0.65:
-#             self.terminal_signal = True
-#             return True
-#         return self.timestep.last()

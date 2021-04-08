@@ -339,6 +339,8 @@ class SAC(object):
         if self.args.predict_force:
             predicted_f = self.force_network.predict_force(state, action, detach=False)
             force_loss = F.mse_loss(predicted_f, reaction_force)
+            # weights = torch.tensor([4.0, 4.0, 1.0, 1.0], device=torch.device('cuda:0'))
+            # force_loss = (((predicted_f - reaction_force) ** 2) * weights).sum(axis=1).mean()
             self.force_optimizer.zero_grad()
             force_loss.backward()
             self.force_optimizer.step()

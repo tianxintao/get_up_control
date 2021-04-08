@@ -12,7 +12,7 @@ from tensorboardX import SummaryWriter
 from PPO import PPO
 from SAC import SAC
 from torch.utils.tensorboard import SummaryWriter
-from env import CustomMountainCarEnv, HumanoidStandupEnv, HumanoidStandupRandomEnv, HumanoidBenchEnv, Humanoid2DStandupEnv
+from env import CustomMountainCarEnv, HumanoidStandupEnv, HumanoidStandupRandomEnv, HumanoidBenchEnv, Humanoid2DStandupEnv, HumanoidChairEnv
 from utils import PGBuffer, ReplayBuffer
 import argparse
 
@@ -21,7 +21,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class ArgParserTrain(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument('--env', type=str, default='HumanoidStandup', choices=['HumanoidStandup', 'Humanoid2DStandup', 'HumanoidRandom','HumanoidBench','MountainCarContinuous-v0'])
+        self.add_argument('--env', type=str, default='HumanoidStandup', choices=['HumanoidStandup', 'Humanoid2DStandup', 'HumanoidRandom','HumanoidBench','HumanoidChair','MountainCarContinuous-v0'])
         self.add_argument("--policy", default="SAC",choices=['SAC', 'PPO'])
         self.add_argument('--original', default=False, action='store_true', help='if set true, use the default power/strength parameters')
         self.add_argument('--debug', default=False, action='store_true')
@@ -86,6 +86,8 @@ def env_function(args):
         return HumanoidBenchEnv
     elif args.env == "Humanoid2DStandup":
         return Humanoid2DStandupEnv
+    elif args.env == "HumanoidChair":
+        return HumanoidChairEnv
 
 def main():
     args = ArgParserTrain().parse_args()
@@ -184,6 +186,13 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
 
         # Store data in replay buffer
         replay_buffer.add(state, action, next_state, reward, env.terminal_signal, reaction_force)
+
+        # if args.predict_force:
+        #     force_predicted = policy.force_network.predict_force(
+        #         torch.FloatTensor(state['scalar']).cuda().unsqueeze(0),
+        #         torch.FloatTensor(action).cuda().unsqueeze(0),
+        #         detach=False)
+        #     print(torch.nn.functional.mse_loss(force_predicted.detach().cpu(), torch.tensor(reaction_force).unsqueeze(0)))
 
         state = next_state
         episode_reward += reward
