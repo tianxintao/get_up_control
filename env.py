@@ -465,8 +465,12 @@ class HumanoidChairEnv(HumanoidBenchEnv):
         return self.env.physics.render(height=256, width=256, camera_id=1)
 
     def reset(self, test_time=False):
+        # self.physics.reload_from_xml_string(
+        #     self.model_str.format(handle_height=0.1, handle_position=0.15),
+        #     common.ASSETS
+        # )
         self.physics.reload_from_xml_string(
-            self.model_str.format(handle_height=0.1, handle_position=0.15),
+            self.model_str,
             common.ASSETS
         )
         return super().reset(test_time=test_time)

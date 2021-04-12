@@ -38,6 +38,7 @@ class ArgParserTrain(argparse.ArgumentParser):
         self.add_argument('--gamma', type=float, default=0.999, help='discount factor')
         self.add_argument('--max_ep_len', type=int, default=1000)
         self.add_argument('--custom_reset', default=False, action='store_true')
+        self.add_argument('--avg_reward', default=False, action='store_true')
         self.add_argument("--work_dir", default='./experiment/')
         self.add_argument("--load_dir", default=None, type=str)
 
@@ -233,7 +234,8 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
             tb.add_scalar("Test/Reward", test_reward, t)
             if len(video) != 0:
                 imageio.mimsave(os.path.join(video_dir, 't_{}.mp4'.format(t)), video, fps=30)
-            save_checkpoint = env.adjust_power(min_test_reward)
+            criteria = test_reward if args.avg_reward else min_test_reward
+            save_checkpoint = env.adjust_power(criteria)
             if(test_reward > best_reward):
                 policy.save(os.path.join(model_dir,'best_model'))
                 best_reward = test_reward
