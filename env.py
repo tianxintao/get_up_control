@@ -456,11 +456,12 @@ class HumanoidChairEnv(HumanoidBenchEnv):
     xml_path = './data/humanoid_chair.xml'
 
     def __init__(self, args, seed):
+        self.chair_angle_mean = 30
+        self.chair_angle_range = 3
         with open('./data/humanoid_chair.txt', 'r') as reader:
             self.model_str = reader.read()
         super().__init__(args, seed)
         
-
     def render(self, mode=None):
         return self.env.physics.render(height=256, width=256, camera_id=1)
 
@@ -470,8 +471,42 @@ class HumanoidChairEnv(HumanoidBenchEnv):
         #     common.ASSETS
         # )
         self.physics.reload_from_xml_string(
-            self.model_str,
+            self.model_str.format(chair_angle=self.sample_angle()),
             common.ASSETS
         )
         return super().reset(test_time=test_time)
 
+    @property
+    def _state(self):
+        _state = super()._state["scalar"]
+        power = _state[-1]
+        _state = _state[:-1]
+
+
+        return {
+            "scalar": np.concatenate((_state, [self.chair_angle/20], [power])),
+            "terrain": None,
+        }
+    
+    def sample_power(self, std=0.02):
+        if np.abs(self.power_base - self.power_end) <= 1e-3 or self.original:
+            self.power = self.power_base
+            return
+        self.power = np.clip(self.power_base + np.random.randn() * std, self.power_end, 1)
+
+    def adjust_power(self, test_reward, threshold=40):
+        if self.original or np.abs(self.power_base - self.power_end) <= 1e-3:
+            return False
+        if test_reward > threshold:
+            self.power_base = max(0.95 * self.power_base, self.power_end)
+            self.chair_angle_mean = np.clip(self.chair_angle_mean-3, 0, 30)
+            self.chair_angle_range = np.clip(self.chair_angle_range*1.1, 0, 20)
+        return np.abs(self.power_base - self.power_end) <= 1e-3
+
+    def sample_angle(self):
+        self.chair_angle = np.random.rand() * self.chair_angle_range + self.chair_angle_mean
+        return self.chair_angle
+
+    def set_chair_parameters(self, mean, chair_range):
+        self.chair_angle_mean = mean
+        self.chair_angle_range = chair_range

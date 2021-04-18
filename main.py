@@ -243,8 +243,8 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
             if args.velocity_penalty: replay_buffer.penalty_coeff = max(best_reward - 200, 0)/600
             curriculum = env.power_base > args.power_end and env.power_base < args.power
             logger.info("-------------------------------------------------")
-            logger.info("Evaluation over 10 episodes: {:.3f}, minimum reward: {:.3f}, Curriculum: {}".\
-                format(test_reward, min_test_reward, curriculum))
+            logger.info("Evaluation over 10 episodes: {:.3f}, minimum reward: {:.3f}, Curriculum: {}, current angle: {}_{}".\
+                format(test_reward, min_test_reward, curriculum, env.chair_angle_mean, env.chair_angle_range))
             logger.info("-------------------------------------------------")
             logger.info("Current power: {:.3f}".format(env.power_base))
             if (save_checkpoint):
@@ -312,6 +312,7 @@ def run_tests(policy, train_env, args, video_tag):
     test_env = test_env_generator(args, args.seed)
     # test_env.seed(args.seed + 10)
     test_env.set_power(train_env.export_power())
+    test_env.set_chair_parameters(train_env.chair_angle_mean, train_env.chair_angle_range)
     test_reward = []
     video_index = np.random.random_integers(0, args.test_iterations-1)
     video = []
