@@ -200,7 +200,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
 
         # Train agent after collecting sufficient data
         if t >= args.start_timesteps and not args.test_policy:
-            policy.train(replay_buffer, curriculum, args.batch_size)
+            policy.train(replay_buffer, env.curriculum_finished, args.batch_size)
 
 
         if done:
@@ -241,7 +241,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
                 best_reward = test_reward
                 logger.info("Best model saved")
             if args.velocity_penalty: replay_buffer.penalty_coeff = max(best_reward - 200, 0)/600
-            curriculum = env.power_base > args.power_end and env.power_base < args.power
+            curriculum = env.power_base < args.power and (not env.curriculum_finished)
             logger.info("-------------------------------------------------")
             logger.info("Evaluation over 10 episodes: {:.3f}, minimum reward: {:.3f}, Curriculum: {}, current angle: {}_{}".\
                 format(test_reward, min_test_reward, curriculum, env.chair_angle_mean, env.chair_angle_range))

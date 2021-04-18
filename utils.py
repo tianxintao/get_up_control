@@ -45,7 +45,7 @@ class ReplayBuffer(object):
         self.ptr = (self.ptr + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
 
-    def sample(self, batch_size, curriculum):
+    def sample(self, batch_size):
         ind = np.random.randint(0, self.size, size=batch_size)
         if self.args.velocity_penalty:
             modified_reward = self.reward[ind]

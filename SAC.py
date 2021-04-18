@@ -286,7 +286,7 @@ class SAC(object):
         self.total_it = 0
 
         if self.args.scheduler:
-            milestones = [10000,50000,200000,500000,1000000,2000000]
+            milestones = [100000,600000,1000000]
             self.actor_scheduler = torch.optim.lr_scheduler.MultiStepLR(
                 self.actor_optimizer,
                 milestones=milestones,
@@ -331,10 +331,10 @@ class SAC(object):
             mu, pi, _, _ = self.actor(state, compute_log_pi=False, terrain=terrain)
             return pi.cpu().data.numpy().flatten()
  
-    def train(self, replay_buffer, curriculum, batch_size=100):
+    def train(self, replay_buffer, curriculum_finished, batch_size=100):
         self.total_it += 1
 
-        state, action, next_state, reward, not_done, terrain, next_terrain, reaction_force = replay_buffer.sample(batch_size, curriculum)
+        state, action, next_state, reward, not_done, terrain, next_terrain, reaction_force = replay_buffer.sample(batch_size)
 
         if self.args.predict_force:
             predicted_f = self.force_network.predict_force(state, action, detach=False)
@@ -390,7 +390,7 @@ class SAC(object):
             for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
                 target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        if self.args.scheduler:
+        if self.args.scheduler and curriculum_finished:
             self.actor_scheduler.step()
             self.critic_scheduler.step()
             # self.log_alpha_scheduler.step()

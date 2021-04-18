@@ -100,6 +100,7 @@ class HumanoidStandupEnv():
 
     def __init__(self, args, seed):
         self.env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random': seed})
+        self.count = 0
         self.args = args
         self.env._flat_observation = True
         self.physics = self.env.physics
@@ -150,18 +151,24 @@ class HumanoidStandupEnv():
     def render(self, mode=None):
         return self.env.physics.render(height=128, width=128, camera_id=1)
 
+    @property
+    def curriculum_finished(self):
+        return (np.abs(self.power_base - self.power_end) <= 1e-3 and self.count > 1)
+
     def sample_power(self, std=0.02):
-        if np.abs(self.power_base - self.power_end) <= 1e-3 or self.original:
+        if self.curriculum_finished or self.original:
             self.power = self.power_base
             return
         self.power = np.clip(self.power_base + np.random.randn() * std, self.power_end, 1)
 
     def adjust_power(self, test_reward, threshold=90):
-        if self.original or np.abs(self.power_base - self.power_end) <= 1e-3:
+        if self.original or self.curriculum_finished:
             return False
         if test_reward > threshold:
             self.power_base = max(0.95 * self.power_base, self.power_end)
-        return np.abs(self.power_base - self.power_end) <= 1e-3
+            if np.abs(self.power_base - self.power_end) <= 1e-3:
+                self.count += 1
+        return self.curriculum_finished
 
     def export_power(self):
         return {
