@@ -33,14 +33,14 @@ def weight_init(m):
     if isinstance(m, nn.Linear):
         nn.init.orthogonal_(m.weight.data)
         m.bias.data.fill_(0.0)
-    # elif isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-    #     # delta-orthogonal init from https://arxiv.org/pdf/1806.05393.pdf
-    #     assert m.weight.size(2) == m.weight.size(3)
-    #     m.weight.data.fill_(0.0)
-    #     m.bias.data.fill_(0.0)
-    #     mid = m.weight.size(2) // 2
-    #     gain = nn.init.calculate_gain('relu')
-    #     nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
+    elif isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        # delta-orthogonal init from https://arxiv.org/pdf/1806.05393.pdf
+        assert m.weight.size(2) == m.weight.size(3)
+        m.weight.data.fill_(0.0)
+        m.bias.data.fill_(0.0)
+        mid = m.weight.size(2) // 2
+        gain = nn.init.calculate_gain('relu')
+        nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
 
 
 class Actor(nn.Module):
@@ -60,7 +60,7 @@ class Actor(nn.Module):
         )
 
         # self.outputs = dict()
-        self.apply(weight_init)
+        # self.apply(weight_init)
 
     def forward(self, state, compute_pi=True, compute_log_pi=True, terrain=None):
 
@@ -128,7 +128,7 @@ class Critic(nn.Module):
             nn.Linear(1024, 1)
         )
 
-        self.apply(weight_init)
+        # self.apply(weight_init)
 
     def forward(self, state, action, terrain=None, detach=False):
         # detach_encoder allows to stop gradient propogation to encoder
@@ -189,18 +189,16 @@ class Encoder(nn.Module):
         super().__init__()
 
         self.convs = nn.Sequential(
-            nn.Conv2d(1, 16, 3, stride=1), nn.ReLU(),
-            nn.Conv2d(16, 16, 3, stride=1), nn.ReLU(),
-            nn.Conv2d(16, 16, 3, stride=1), nn.ReLU(),
+            nn.Conv2d(1, 4, 3, stride=1), nn.ReLU(),
+            nn.Conv2d(4, 4, 3, stride=1), nn.ReLU(),
         )
 
         # Debug needed
         output_size = self.convs(torch.randn(1,1,obs_shape,obs_shape)).shape.numel()
 
         self.ln = nn.Sequential(
-            nn.Linear(output_size, 64), nn.ReLU(),
-            nn.Linear(64, 32), nn.ReLU(),
-            nn.Linear(32, feature_dim)
+            nn.Linear(output_size, 16), nn.ReLU(),
+            nn.Linear(16, feature_dim)
         )
 
         self.apply(weight_init)
@@ -215,7 +213,7 @@ class Encoder(nn.Module):
         return self.ln(h)
 
 
-class SAC(object):
+class SAC(nn.Module):
     def __init__(
         self,
         state_dim,
@@ -235,6 +233,7 @@ class SAC(object):
         critic_target_update_freq=2,
         args=None
     ):
+        super().__init__()
         self.args = args
         self.discount = discount
         self.tau = tau
@@ -243,6 +242,9 @@ class SAC(object):
         self.encoder = None
         self.reward_avg = 0.0
         self.avg_force_loss = 0.0
+        self.init_temperature = init_temperature
+        self.alpha_lr = alpha_lr
+        self.alpha_beta = alpha_beta
 
         if self.args.add_terrain:
             state_dim = state_dim + self.args.terrain_dim
@@ -265,8 +267,7 @@ class SAC(object):
         # tie encoders between actor and critic, and CURL and critic
         # self.actor.encoder.copy_conv_weights_from(self.critic.encoder)
 
-        self.log_alpha = torch.tensor(np.log(init_temperature)).to(device)
-        self.log_alpha.requires_grad = True
+        
         # set target entropy to -|A|
         self.target_entropy = -np.prod(action_dim)
         
@@ -279,14 +280,12 @@ class SAC(object):
             self.critic.parameters(), lr=critic_lr, betas=(critic_beta, 0.999)
         )
 
-        self.log_alpha_optimizer = torch.optim.Adam(
-            [self.log_alpha], lr=alpha_lr, betas=(alpha_beta, 0.999)
-        )
-
+        self.reset_alpha()
+        
         self.total_it = 0
 
         if self.args.scheduler:
-            milestones = [100000,600000,1000000]
+            milestones = [100000,600000,1000000,1600000]
             self.actor_scheduler = torch.optim.lr_scheduler.MultiStepLR(
                 self.actor_optimizer,
                 milestones=milestones,
@@ -300,6 +299,13 @@ class SAC(object):
 
         if self.args.debug:
             self.reset_record()
+    
+    def reset_alpha(self):
+        self.log_alpha = torch.tensor(np.log(self.init_temperature)).to(device)
+        self.log_alpha.requires_grad = True
+        self.log_alpha_optimizer = torch.optim.Adam(
+            [self.log_alpha], lr=self.alpha_lr, betas=(self.alpha_beta, 0.999)
+        )
 
     def reset_record(self):
         self.critic_loss = []
@@ -314,6 +320,7 @@ class SAC(object):
         return self.log_alpha.exp()
 
     def select_action(self, state, terrain=None):
+        if self.args.add_terrain: self.encoder.eval()
         with torch.no_grad():
             state = torch.FloatTensor(state.reshape(1, -1)).to(device)
             if terrain is not None:
@@ -321,20 +328,37 @@ class SAC(object):
             mu, _, _, _ = self.actor(
                 state, compute_pi=False, compute_log_pi=False, terrain=terrain
             )
+            if self.args.add_terrain: self.encoder.train()
             return mu.cpu().data.numpy().flatten()
 
     def sample_action(self, state, terrain=None):
+        if self.args.add_terrain: self.encoder.eval()
         with torch.no_grad():
             state = torch.FloatTensor(state.reshape(1, -1)).to(device)
             if terrain is not None:
                 terrain = torch.FloatTensor(terrain).unsqueeze(0).unsqueeze(0).to(device)
             mu, pi, _, _ = self.actor(state, compute_log_pi=False, terrain=terrain)
+            if self.args.add_terrain: self.encoder.train()
             return pi.cpu().data.numpy().flatten()
- 
+    
+    # def policy_cloning(self, replay_buffer, batch_size=100):
+
+    #     for _ in range(5):
+    #         state, action, next_state, reward, not_done, terrain, next_terrain, reaction_force = replay_buffer.sample(batch_size)
+
+    #         selected_action, sampled_action, _, _ = self.actor(next_state, terrain=next_terrain)
+    #         actor_loss = F.mse_loss(sampled_action, action)
+    #         self.actor_optimizer.zero_grad()
+    #         actor_loss.backward()
+    #         self.actor_optimizer.step()
+
+    #         if self.args.debug:
+    #             self.actor_loss.append(actor_loss.item())
+
     def train(self, replay_buffer, curriculum_finished, batch_size=100):
         self.total_it += 1
 
-        state, action, next_state, reward, not_done, terrain, next_terrain, reaction_force = replay_buffer.sample(batch_size)
+        state, action, next_state, reward, not_done, terrain, next_terrain, reaction_force, behavior_action = replay_buffer.sample(batch_size)
 
         if self.args.predict_force:
             predicted_f = self.force_network.predict_force(state, action, detach=False)
@@ -385,6 +409,7 @@ class SAC(object):
 
             alpha_loss.backward()
             self.log_alpha_optimizer.step()
+            # print(self.alpha)
 
             # Update the frozen target models
             for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
@@ -397,12 +422,13 @@ class SAC(object):
 
         if self.args.debug:
             self.critic_loss.append(critic_loss.item())
-            self.actor_loss.append(actor_loss.item())
-            self.temperature_loss.append(alpha_loss.item())
+            if self.total_it % self.policy_freq == 0: 
+                self.actor_loss.append(actor_loss.item()) 
+                self.temperature_loss.append(alpha_loss.item())
             if self.args.predict_force:
                 self.reaction_force_loss.append(force_loss.item())
             self.temperature.append(self.alpha.item())
-
+            
 
     def save(self, filename):
         torch.save(self.critic.state_dict(), filename + "_critic.pt")

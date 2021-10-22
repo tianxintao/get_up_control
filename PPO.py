@@ -4,6 +4,8 @@ import torch.nn as nn
 from torch.distributions.normal import Normal
 from torch.distributions.categorical import Categorical
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class Network(nn.Module):
     """Network definition to be used for actor and critic networks"""
     def __init__(self, in_dim, out_dim):
@@ -85,11 +87,12 @@ class PPO(nn.Module):
             obs_dim,
             act_dim,
             discrete,
-            lr_pi=3e-4,
-            lr_v = 1e-3,
-            clip_ratio=0.2,
-            train_pi_iters=20,
-            train_v_iters=20
+            target_kl=0.01,
+            lr_pi=1e-4,
+            lr_v = 1e-4,
+            clip_ratio=0.1,
+            train_pi_iters=80,
+            train_v_iters=320
     ):
         super().__init__()
         # bulid actor networt
@@ -106,20 +109,29 @@ class PPO(nn.Module):
         self.clip_ratio = clip_ratio
         self.train_pi_iters = train_pi_iters
         self.train_v_iters = train_v_iters
+        self.target_kl = target_kl
 
-    def step(self, obs):
+        self.reset_record()
+    
+    def reset_record(self):
+        self.pi_loss = []
+        self.v_loss = []
+
+    def sample_action(self, state, terrain=None):
         """Run a single forward step of the ActorCritic networks.  Used during rollouts, but not during optimization"""
         # no_grad, since we don't need to do any backprop while we collect data.
         # this means we will have to recompute forward passes later. (this is standard)
+        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
         with torch.no_grad():
-            pi, _ = self.pi(obs)
+            pi, _ = self.pi(state)
             a = pi.sample()
             logp_a = pi.log_prob(a) if self.discrete else pi.log_prob(a).sum(axis=-1)
-            v = self.v(obs)
+            v = self.v(state)
         return a.cpu().numpy(), v.cpu().numpy(), logp_a.cpu().numpy()
 
-    def select_action(self,obs):
-        pi, _ = self.pi(obs)
+    def select_action(self, state, terrain=None):
+        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
+        pi, _ = self.pi(state)
         return pi.mean.cpu().detach().numpy()
 
     # Set up update function
@@ -135,7 +147,11 @@ class PPO(nn.Module):
         for i in range(self.train_pi_iters):
             self.pi_optimizer.zero_grad()
             loss_pi, pi_info = self.compute_loss_pi(batch)
+            if pi_info["kl"] > self.target_kl:
+                print("Early stopping")
+                break
             loss_pi.backward()
+            self.pi_loss.append(loss_pi.item())
             self.pi_optimizer.step()
 
         # Value function learning
@@ -143,9 +159,10 @@ class PPO(nn.Module):
             self.vf_optimizer.zero_grad()
             loss_v = self.compute_loss_v(batch)
             loss_v.backward()
+            self.v_loss.append(loss_v.item())
             self.vf_optimizer.step()
-
-        # # Log changes from update
+        
+        # # # Log changes from update
         # kl, ent = pi_info['kl'], pi_info_old['ent']
         # logs['kl'] += [kl]
         # logs['ent'] += [ent]
@@ -178,6 +195,13 @@ class PPO(nn.Module):
         v = self.v(obs)
         loss_v = nn.functional.mse_loss(v.squeeze(-1), ret)
         return loss_v
+
+    def save(self, filename):
+        torch.save(self.v.state_dict(), filename + "_critic.pt")
+        torch.save(self.vf_optimizer.state_dict(), filename + "_critic_optimizer.pt")
+
+        torch.save(self.pi.state_dict(), filename + "_actor.pt")
+        torch.save(self.pi_optimizer.state_dict(), filename + "_actor_optimizer.pt")
 
 
 if __name__=="__main__":

@@ -57,18 +57,18 @@
           <body name="right_thigh" pos="0 -.1 -.04">
             <site name="right_hip" class="force-torque"/>
             <joint name="right_hip_x" axis="1 0 0" range="-25 5"   class="big_joint"/>
-            <joint name="right_hip_z" axis="0 0 1" range="-60 35"  class="big_joint"/>
+            <joint name="right_hip_z" axis="0 0 1" range="-30 30"  class="big_joint"/>
             <joint name="right_hip_y" axis="0 1 0" range="-110 20" class="big_stiff_joint"/>
             <geom name="right_thigh" fromto="0 0 0 0 .01 -.34" size=".06"/>
             <site name="right_thigh" class="touch" pos="0 .005 -.17" size=".061 .17" zaxis="0 -1 34"/>
             <body name="right_shin" pos="0 .01 -.403">
               <site name="right_knee" class="force-torque" pos="0 0 .02"/>
-              <joint name="right_knee" pos="0 0 .02" axis="0 -1 0" range="-160 2"/>
+              <joint name="right_knee" pos="0 0 .02" axis="0 -1 0" range="-120 2"/>
               <geom name="right_shin" fromto="0 0 0 0 0 -.3"  size=".049"/>
               <site name="right_shin" class="touch" pos="0 0 -.15" size=".05 .15"/>
               <body name="right_foot" pos="0 0 -.39">
                 <site name="right_ankle" class="force-torque"/>
-                <joint name="right_ankle_y" pos="0 0 .08" axis="0 1 0"   range="-50 50" stiffness="6"/>
+                <joint name="right_ankle_y" pos="0 0 .08" axis="0 1 0"   range="-20 45" stiffness="6"/>
                 <joint name="right_ankle_x" pos="0 0 .04" axis="1 0 .5" range="-50 50" stiffness="3"/>
                 <geom name="right_right_foot" fromto="-.07 -.02 0 .14 -.04 0" size=".027"/>
                 <geom name="left_right_foot" fromto="-.07 0 0 .14  .02 0" size=".027"/>
@@ -80,18 +80,18 @@
           <body name="left_thigh" pos="0 .1 -.04">
             <site name="left_hip" class="force-torque"/>
             <joint name="left_hip_x" axis="-1 0 0" range="-25 5"  class="big_joint"/>
-            <joint name="left_hip_z" axis="0 0 -1" range="-60 35" class="big_joint"/>
+            <joint name="left_hip_z" axis="0 0 -1" range="-30 30" class="big_joint"/>
             <joint name="left_hip_y" axis="0 1 0" range="-120 20" class="big_stiff_joint"/>
             <geom name="left_thigh" fromto="0 0 0 0 -.01 -.34" size=".06"/>
             <site name="left_thigh" class="touch" pos="0 -.005 -.17" size=".061 .17" zaxis="0 1 34"/>
             <body name="left_shin" pos="0 -.01 -.403">
               <site name="left_knee" class="force-torque" pos="0 0 .02"/>
-              <joint name="left_knee" pos="0 0 .02" axis="0 -1 0" range="-160 2"/>
+              <joint name="left_knee" pos="0 0 .02" axis="0 -1 0" range="-120 2"/>
               <geom name="left_shin" fromto="0 0 0 0 0 -.3"  size=".049"/>
               <site name="left_shin" class="touch"  pos="0 0 -.15" size=".05 .15"/>
               <body name="left_foot" pos="0 0 -.39">
                 <site name="left_ankle" class="force-torque"/>
-                <joint name="left_ankle_y" pos="0 0 .08" axis="0 1 0"   range="-50 50" stiffness="6"/>
+                <joint name="left_ankle_y" pos="0 0 .08" axis="0 1 0"   range="-20 45" stiffness="6"/>
                 <joint name="left_ankle_x" pos="0 0 .04" axis="1 0 .5" range="-50 50" stiffness="3"/>
                 <geom name="left_left_foot" fromto="-.07 .02 0 .14 .04 0" size=".027"/>
                 <geom name="right_left_foot" fromto="-.07 0 0 .14  -.02 0" size=".027"/>

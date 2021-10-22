@@ -6,10 +6,13 @@ import logging
 import imageio
 from dm_control.utils import rewards
 from dm_control.mujoco.wrapper import mjbindings
+from scipy import interpolate
+from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Slerp
         
 
 class ReplayBuffer(object):
-    def __init__(self, state_dim, action_dim, args, max_size=int(1e6)):
+    def __init__(self, state_dim, action_dim, args, max_size=int(1e6), extra_dim_dict=None):
         self.max_size = max_size
         self.args = args
         self.ptr = 0
@@ -22,20 +25,37 @@ class ReplayBuffer(object):
         self.next_state = np.zeros((max_size, state_dim))
         self.reward = np.zeros((max_size, 1))
         self.not_done = np.zeros((max_size, 1))
+        self.behavior_action = np.zeros((max_size, 1))
         if self.args.add_terrain:
             self.terrain = np.zeros((max_size, self.args.heightfield_dim, self.args.heightfield_dim))
             self.next_terrain = np.zeros_like(self.terrain)
         if self.args.predict_force:
             self.force = np.zeros((max_size, self.args.force_dim))
+        if self.args.relabel_data:
+            self.xquat = np.zeros((max_size, extra_dim_dict["xquat"][1]))
+            self.extremities = np.zeros((max_size, extra_dim_dict["extremities"][1]))
+            self.com = np.zeros((max_size, extra_dim_dict["com"][1]))
+            self.index = np.zeros((max_size, 1), dtype=np.uint8)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def add(self, state, action, next_state, reward, done, reaction_force):
+    def reset(self):
+        self.state = np.zeros_like(self.state)
+        self.action = np.zeros_like(self.action)
+        self.next_state = np.zeros_like(self.next_state)
+        self.reward = np.zeros_like(self.reward)
+        self.not_done = np.zeros_like(self.not_done)
+        self.behavior_action = np.zeros_like(self.behavior_action)
+        self.ptr = 0
+        self.size = 0
+
+    def add(self, state, action, next_state, reward, done, reaction_force, behavior_action):
         self.state[self.ptr] = state["scalar"]
         self.action[self.ptr] = action
         self.next_state[self.ptr] = next_state["scalar"]
         self.reward[self.ptr] = reward
         self.not_done[self.ptr] = 1. - done
+        self.behavior_action[self.ptr] = behavior_action
         if self.args.add_terrain:
             self.terrain[self.ptr] = state["terrain"]
             self.next_terrain[self.ptr] = state["terrain"]
@@ -66,6 +86,7 @@ class ReplayBuffer(object):
                  if self.args.add_terrain else None,
             torch.FloatTensor(self.force[ind]).to(self.device)\
                  if self.args.predict_force else None,
+            torch.FloatTensor(self.behavior_action[ind]).to(self.device)
         )
     
     def save(self, filename):
@@ -90,6 +111,11 @@ class ReplayBuffer(object):
         self.not_done = data['not_done']
         self.ptr = data['ptr']
         self.size = data['size']
+
+    def relabel_data(self, env):
+        for i in range(self.size):
+            self.reward[i] = env.compute_imitaion_reward(self.xquat[i], self.extremities[i], self.com[i], self.index[i].item())
+
         
 
 class PGBuffer:
@@ -120,7 +146,7 @@ class PGBuffer:
         Append one timestep of agent-environment interaction to the buffer.
         """
         assert self.ptr < self.max_size  # buffer has to have room so you can store
-        self.obs_buf[self.ptr] = obs
+        self.obs_buf[self.ptr] = obs["scalar"]
         self.act_buf[self.ptr] = act
         self.rew_buf[self.ptr] = rew
         self.val_buf[self.ptr] = val
@@ -228,3 +254,62 @@ def randomize_limited_and_rotational_joints(physics, k=0.1):
         if is_limited:
             if joint_type == hinge or joint_type == slide:
                 qpos[joint_name] = random.uniform(k * range_min, k * range_max)
+
+
+def interpolate_motion(data, interpolation_coeff=0.25):
+    # data = np.load(trajectory_file)
+    xquat = data["xquat"].reshape(data["xquat"].shape[0],-1,4).copy()
+    extremities = data["extremities"].copy()
+    com_dist = data["com"].copy()
+    com_vel = data["com_vel"][:, 2].copy()
+    qpos = data["qpos"].copy()
+    qvel = data["qvel"].copy()
+    first_index = np.argwhere(com_vel>0)[0][0]
+    l = xquat.shape[0]
+
+    timestamp_ori = np.linspace(0, l-first_index, num=l-first_index, endpoint=True)
+    timestamp_new = interpolation_coeff * timestamp_ori
+
+    for j in range(qpos.shape[1]):
+        curve = interpolate.splrep(timestamp_ori, qpos[first_index:,j])
+        qpos[first_index:,j] = interpolate.splev(timestamp_new, curve, der=0)
+
+    for j in range(qvel.shape[1]):
+        curve = interpolate.splrep(timestamp_ori, qvel[first_index:,j])
+        qvel[first_index:,j] = interpolate.splev(timestamp_new, curve, der=0) * interpolation_coeff
+
+    for j in range(com_dist.shape[1]):
+        curve = interpolate.splrep(timestamp_ori, com_dist[first_index:,j])
+        com_dist[first_index:,j] = interpolate.splev(timestamp_new, curve, der=0)
+    
+    for j in range(extremities.shape[1]):
+        curve = interpolate.splrep(timestamp_ori, extremities[first_index:,j])
+        extremities[first_index:,j] = interpolate.splev(timestamp_new, curve, der=0)
+
+    for j in range(xquat.shape[1]):
+        rotations = xquat[first_index:,j,:]
+        rotations = R.from_quat(rotations[:,[1,2,3,0]])
+        slerp = Slerp(timestamp_ori, rotations)
+        # timestamp_new[0] = 1.0
+        interp_rots = slerp(timestamp_new).as_quat()
+        interp_rots[first_index:,[0,1,2,3]] = interp_rots[first_index:,[3,0,1,2]]
+        xquat[first_index:,j,:] = interp_rots
+
+    interpolated_data = {
+        "xquat": xquat.reshape(xquat.shape[0],-1),
+        "extremities": extremities,
+        "com": com_dist,
+        "qpos": qpos,
+        "qvel": qvel
+    }
+
+    # np.savez('./data/trajectory3d_interpolated.npz', **interpolated_data)
+    return interpolated_data
+
+
+
+
+
+
+if __name__ == "__main__":
+    interpolate_motion('./data/trajectory3d_52_collected.npz')
