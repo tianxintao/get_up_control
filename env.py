@@ -6,12 +6,15 @@ from dm_control.utils import rewards
 from dm_control.suite.humanoid import Humanoid, Physics
 from dm_control.rl import control
 from dm_control.suite import common
+from SAC import SAC
 import os
 import numpy as np
 import math
 import imageio
 import utils
 import cv2
+import copy
+import torch
 
 
 class CustomMountainCarEnv(Continuous_MountainCarEnv):
@@ -134,6 +137,7 @@ class HumanoidStandupEnv():
     def step(self, a, test_time=False):
         self._step_num += 1
         if self.original: a = a * self.power
+        # self.timestep = self.env.step(a)
         self.timestep = self.env.step(a)
         self.obs = self.timestep.observation
         # mujoco.engine.mjlib.mj_rnePostConstraint(self.physics.model.ptr, self.physics.data.ptr)
@@ -182,6 +186,7 @@ class HumanoidStandupEnv():
                 repeat = False
                 # if self.physics.data.ncon == 0: repeat = False
         else:
+            reset_step = 0
             self.timestep = self.env.reset()
             if test_time:
                 self.initial_state = {
@@ -191,8 +196,9 @@ class HumanoidStandupEnv():
             action = np.zeros(self.action_space.shape)
             self.env.step(action)
             # while self.env.physics.center_of_mass_position()[2] > 0.25:
-            while self.env.physics.center_of_mass_velocity()[2] < 0:
-                self.step(action, test_time=False)
+            while self.env.physics.center_of_mass_velocity()[2] < 0 or reset_step < 50:
+                reset_step += 1
+                self.env.step(action)
                 if test_time: self.images.append(self.render())
             self._step_num = 0
 
@@ -244,8 +250,8 @@ class HumanoidStandupEnv():
         _state = []
         for part in self.obs.values():
             _state.append(part if not np.isscalar(part) else [part])
-        if self.args.imitation_reward:
-            _state.append([np.sin(self._step_num/200*np.pi),np.cos(self._step_num/200*np.pi)])
+        # if self.args.imitation_reward:
+        #     _state.append([np.sin(self._step_num/200*np.pi),np.cos(self._step_num/200*np.pi)])
         _state.append([self.power])
         # print("velocity_z:{}, velocity:{}".format(np.concatenate(_state)[42],np.abs(np.concatenate(_state)[40:67]).mean()))
         return {
@@ -261,21 +267,39 @@ class HumanoidStandupEnv():
 
     @property
     def _standing(self):
-        return rewards.tolerance(self.physics.head_height(),
+        standing =  rewards.tolerance(self.physics.head_height(),
                                  bounds=(self._STAND_HEIGHT, float('inf')),
                                  margin=self._STAND_HEIGHT / 4)
+        return (9 * standing + 1) / 10
 
     @property
     def _small_control(self):
         control_val = rewards.tolerance(self.physics.control(), margin=1,
                                         value_at_margin=0,
                                         sigmoid='quadratic').mean()
-        return (3 + 2 * control_val) / 5
+        return (2 + 3 * control_val) / 5
 
     @property
     def _dont_move(self):
         horizontal_velocity = self.physics.center_of_mass_velocity()[[0, 1]]
         return rewards.tolerance(horizontal_velocity, bounds=[-0.3, 0.3], margin=1.2).mean()
+
+    @property
+    def _closer_feet(self):
+        left_feet_pos = self.physics.data.xpos[10, :2]
+        right_feet_pos = self.physics.data.xpos[7, :2]
+        feet_distance = np.sqrt(((right_feet_pos - left_feet_pos) ** 2).sum())
+        feet_reward = rewards.tolerance(feet_distance,
+                                    bounds=(0, 0.9), sigmoid='quadratic',
+                                    margin=0.38, value_at_margin=0)
+        return feet_reward
+    
+    @property
+    def upright(self):
+        upright = rewards.tolerance(self.physics.torso_upright(),
+                                    bounds=(0.9, float('inf')), sigmoid='linear',
+                                    margin=0.9, value_at_margin=0)
+        return upright
 
     # @property
     # def _slow_motion(self):
@@ -295,9 +319,7 @@ class HumanoidStandupEnv():
 
     @property
     def _reward(self):
-        upright = rewards.tolerance(self.physics.torso_upright(),
-                                    bounds=(0.9, float('inf')), sigmoid='linear',
-                                    margin=0.9, value_at_margin=0)
+        
         if self.args.imitation_reward and not self.args.teacher_student:
             return self.compute_imitaion_reward(
                 self.physics.data.xquat[1:].flatten(), 
@@ -305,8 +327,8 @@ class HumanoidStandupEnv():
                 self.physics.center_of_mass_position(), 
                 self._step_num-1)
 
-        return self._standing * upright * self._dont_move
-        # return  0.2 * upright * self._dont_move + 0.8 * self._standing
+        # return self._standing * upright * self._dont_move
+        return  self.upright * self._standing * self._small_control * self._dont_move * self._closer_feet
             
         
         # if self.physics.data.qpos[2] > 1.15:
@@ -353,7 +375,7 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
 
     def __init__(self, args, seed):
         if args.teacher_student:
-            self.teacher_env = HumanoidStandupEnv(args, args.seed)
+            self.teacher_env = HumanoidStandupHybridEnv(args, args.seed)
         super().__init__(args,seed)
         
     def run_one_episode(self):
@@ -362,7 +384,7 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
         state, done = self.teacher_env.reset(test_time=True), False
         episode_reward = 0
         while not done:        
-            action = self.teacher_policy.select_action(np.delete(state["scalar"], [-2, -3]), terrain=state["terrain"])
+            action = self.teacher_policy.select_action(state["scalar"], terrain=state["terrain"])
             state, reward, done, _ = self.teacher_env.step(action, test_time=True)
             episode_reward += reward
         trajectory = {    
@@ -387,8 +409,8 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
             self.com_vel = []
             self.qpos = []
             self.qvel = []
-        # self.speed = np.random.randint(0, 7) * 0.1 + 0.2
-        self.speed = 0.8
+        self.speed = np.random.randint(0, 7) * 0.1 + 0.2
+        # self.speed = 0.8
         # if self.trajectoty_data != None:
         #     self.interpolated_trajectory = utils.interpolate_motion(self.trajectoty_data, self.speed)
         
@@ -527,27 +549,105 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
         return np.exp(-np.sum(distance/4))
 
 
-class HumanoidStandupCollectEnv(HumanoidStandupEnv):
+# class HumanoidStandupCollectEnv(HumanoidStandupEnv):
 
-    def reset(self, test_time=False):
-        state = super().reset(test_time=test_time)
-        self.xquat = []
-        self.extremities = []
-        self.com = []
-        self.com_vel = []
-        self.qpos = []
-        self.qvel = []
-        return state
+#     def reset(self, test_time=False):
+#         state = super().reset(test_time=test_time)
+#         self.xquat = []
+#         self.extremities = []
+#         self.com = []
+#         self.com_vel = []
+#         self.qpos = []
+#         self.qvel = []
+#         return state
+
+#     def step(self, a, test_time=False):
+#         ret = super().step(a)
+#         self.xquat.append(self.physics.data.xquat[1:].flatten())
+#         self.extremities.append(self.physics.extremities())
+#         self.com.append(self.physics.center_of_mass_position())
+#         self.com_vel.append(self.physics.center_of_mass_velocity())
+#         self.qpos.append(self.physics.data.qpos.copy())
+#         self.qvel.append(self.physics.data.qvel.copy())
+#         return ret
+
+class HumanoidStandupHybridEnv(HumanoidStandupEnv):
+
+    qpos_to_ctrl_index = np.array([1, 0, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 12, 14, 13, 15, 16, 17, 18, 19, 20])
+    def __init__(self, args, seed):
+        super().__init__(args,seed)
+
+        self.default_qpos = self.physics.data.qpos.copy()
+        # adjust elbow
+        self.default_qpos[24] = -2.2
+        self.default_qpos[27] = -2.2
+        # adjust shoulder
+        self.default_qpos[23] = -0.3
+        self.default_qpos[26] = 0.3
+
+        self.standing_policy = SAC(
+            self.obs_shape[0],
+            self.action_space.shape[0],
+            init_temperature=args.init_temperature,
+            alpha_lr=args.alpha_lr,
+            actor_lr=args.actor_lr,
+            critic_lr=args.critic_lr,
+            tau=args.tau,
+            discount=args.discount,
+            critic_target_update_freq=args.critic_target_update_freq,
+            args=args
+        )
+        self.standup_policy = copy.deepcopy(self.standing_policy)
+        self.standing_policy.load(os.path.join(args.standing_policy+'/model','best_model'),load_optimizer=False)
+        self.standup_policy.load(os.path.join(args.standup_policy+'/model','best_model'),load_optimizer=False)
+        for param in self.standing_policy.parameters():
+            param.requires_grad = False
+        for param in self.standup_policy.parameters():
+            param.requires_grad = False
 
     def step(self, a, test_time=False):
-        ret = super().step(a)
-        self.xquat.append(self.physics.data.xquat[1:].flatten())
-        self.extremities.append(self.physics.extremities())
-        self.com.append(self.physics.center_of_mass_position())
-        self.com_vel.append(self.physics.center_of_mass_velocity())
-        self.qpos.append(self.physics.data.qpos.copy())
-        self.qvel.append(self.physics.data.qvel.copy())
-        return ret
+        self.action = a
+        self._step_num += 1
+        with torch.no_grad():
+            standup_state = np.array(self._state["scalar"])
+            standup_state[-1] = 0.4
+            standup_action = self.standup_policy.select_action(standup_state)
+            standing_action = self.standing_policy.select_action(np.array(self._state["scalar"]))
+
+        self.timestep = self.substep(a, standup_action, standing_action)
+        self.obs = self.env._task.get_observation(self.physics)
+
+        if test_time: self.images.append(self.render())
+        if test_time and (self.args.imitation_reward or self.args.teacher_student):
+            self.xquat.append(self.physics.data.xquat[1:].flatten())
+            self.extremities.append(self.physics.extremities())
+            self.com.append(self.physics.center_of_mass_position())
+            self.com_vel.append(self.physics.center_of_mass_velocity())
+            self.qpos.append(self.physics.data.qpos.copy())
+            self.qvel.append(self.physics.data.qvel.copy())
+        return self._state, self._reward, self._done, None
+
+    def substep(self, coeff, standup_action, standing_action):
+        coeff_scaled = coeff
+        for _ in range(self.env._n_sub_steps):
+            pose_diff = ((self.default_qpos[7:] + standing_action) - self.physics.data.qpos[7:])[self.qpos_to_ctrl_index]
+            kp = self.physics.model.actuator_gear[:, 0] / 100 * 2
+            kd = kp / 5
+            final_standing_action = kp * pose_diff - ((kd * self.physics.data.qvel[6:])[self.qpos_to_ctrl_index])
+            final_action = coeff_scaled * final_standing_action + (1-coeff_scaled) * standup_action
+            self.env._task.before_step(final_action, self.env._physics)
+            self.env._physics.step()
+        self.env._task.after_step(self.env._physics)
+    
+    @property
+    def _reward(self):
+        return super()._reward * self._small_control
+
+    @property
+    def _standing(self):
+        return rewards.tolerance(self.physics.head_height(),
+                                 bounds=(1.4, float('inf')),
+                                 margin=1.4 / 3)
 
 
 
@@ -635,71 +735,64 @@ class HumanoidStandingEnv(HumanoidStandupEnv):
                                         sigmoid='quadratic').mean()
         return (2 + 3 * control_val) / 5
 
-# class Humanoid2DStandupEnv(HumanoidStandupEnv):
-#     def __init__(self, args, seed):
-#         physics = Physics.from_xml_path('./data/humanoid_2D.xml')
-#         task = Humanoid(move_speed=0, pure_state=False)
-#         environment_kwargs = {}
-#         self.env = control.Environment(
-#                         physics, task, time_limit=1000, control_timestep=.025,
-#                         **environment_kwargs)
-#         self.args = args
-#         self.count = 0
-#         self.env._flat_observation = True
-#         self.physics = self.env.physics
-#         self.default_qpos = self.physics.data.qpos.copy()
-#         self.custom_reset = args.custom_reset
-#         self.power_end = args.power_end
-#         self.original = args.original
-#         self.power_base = args.power
-#         self.reset()
-#         self.action_space = self.env.action_spec()
-#         self.obs_shape = self._state["scalar"].shape
-#         self.trajectoty_data = np.load('./data/trajectory_64.npz')
+class Humanoid2DStandupEnv(HumanoidStandupEnv):
+    def __init__(self, args, seed):
+        physics = Physics.from_xml_path('./data/humanoid_2D.xml')
+        task = Humanoid(move_speed=0, pure_state=False)
+        environment_kwargs = {}
+        self.env = control.Environment(
+                        physics, task, time_limit=1000, control_timestep=.025,
+                        **environment_kwargs)
+        self.args = args
+        self.count = 0
+        self.env._flat_observation = True
+        self.physics = self.env.physics
+        self.default_qpos = self.physics.data.qpos.copy()
+        self.custom_reset = args.custom_reset
+        self.power_end = args.power_end
+        self.original = args.original
+        self.power_base = args.power
+        self.reset()
+        self.action_space = self.env.action_spec()
+        self.obs_shape = self._state["scalar"].shape
+        self.trajectoty_data = np.load('./data/trajectory_64.npz')
 
-#     def reset(self, test_time=False):
-#         repeat = True
-#         self.xquat = []
-#         self.extremities = []
-#         self.com = []
-#         while repeat:
-#             with self.physics.reset_context():
-#                 self.env.reset()
-#                 if not self.default_qpos is None:
-#                     self.physics.data.qpos[:] = self.default_qpos
-#                     self.physics.data.qpos[:3] = [0, 0, 1.5]
-#                     self.physics.data.qpos[3:7] = [0.7071, 0.7071, 0, 0]
-#                     self.physics.after_reset()
-#                 utils.randomize_limited_and_rotational_joints(self.physics, k=0.1)
+    def reset(self, test_time=False):
+        repeat = True
+        self.xquat = []
+        self.extremities = []
+        self.com = []
+        while repeat:
+            with self.physics.reset_context():
+                self.env.reset()
+                if not self.default_qpos is None:
+                    self.physics.data.qpos[:] = self.default_qpos
+                    self.physics.data.qpos[:3] = [0, 0, 1.5]
+                    self.physics.data.qpos[3:7] = [0.7071, 0.7071, 0, 0]
+                    self.physics.after_reset()
+                utils.randomize_limited_and_rotational_joints(self.physics, k=0.1)
 
-#             if self.physics.data.ncon == 0: repeat = False
+            if self.physics.data.ncon == 0: repeat = False
 
-#         self.obs = self.env._task.get_observation(self.env._physics)
-#         self._step_num = 0
-#         self.terminal_signal = False
-#         if not test_time: self.sample_power()
-#         return self._state
+        self.obs = self.env._task.get_observation(self.env._physics)
+        self._step_num = 0
+        self.terminal_signal = False
+        if not test_time: self.sample_power()
+        return self._state
 
-#     # def step(self, a):
-#     #     ret = super().step(a)
-#     #     self.xquat.append(self.physics.data.xquat[1:].flatten())
-#     #     self.extremities.append(self.physics.extremities())
-#     #     self.com.append(self.physics.center_of_mass_position())
-#     #     return ret
+    # def step(self, a):
+    #     ret = super().step(a)
+    #     self.xquat.append(self.physics.data.xquat[1:].flatten())
+    #     self.extremities.append(self.physics.extremities())
+    #     self.com.append(self.physics.center_of_mass_position())
+    #     return ret
 
-#     @property
-#     def _reward(self):
-#         xquat_dist = np.sum((self.physics.data.xquat[1:].flatten() - self.trajectoty_data["xquat"][self._step_num-1]) ** 2)
-#         extremities_dist = np.sum((self.physics.extremities() - self.trajectoty_data["extremities"][self._step_num-1]) ** 2)
-#         com_dist = np.sum((self.physics.center_of_mass_position() - self.trajectoty_data["com"][self._step_num-1]) ** 2)
-#         distance = 1.0 * xquat_dist + 1.0 * extremities_dist + 1.0 * com_dist
-#         return np.exp(-np.sum(distance/4))
 
-#     @property
-#     def _done(self):
-#         if self._step_num >= 250:
-#             return True
-#         return self.timestep.last()
+    @property
+    def _done(self):
+        if self._step_num >= 250:
+            return True
+        return self.timestep.last()
 
 class HumanoidStandupRandomEnv(HumanoidStandupEnv):
     random_terrain_path = './data/terrain.png'

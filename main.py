@@ -15,7 +15,7 @@ from PPO import PPO
 from SAC import SAC
 from TQC import TQC
 from torch.utils.tensorboard import SummaryWriter
-from env import CustomMountainCarEnv, CheetahEnv, HumanoidStandupEnv, HumanoidStandupCollectEnv, HumanoidStandupRandomEnv, HumanoidBenchEnv, HumanoidChairEnv, HumanoidStandingEnv, HumanoidStandupVelocityEnv
+from env import CustomMountainCarEnv, CheetahEnv, HumanoidStandupEnv, HumanoidStandupRandomEnv, HumanoidBenchEnv, HumanoidChairEnv, HumanoidStandingEnv, HumanoidStandupVelocityEnv, HumanoidStandupHybridEnv
 from utils import PGBuffer, ReplayBuffer
 import argparse
 
@@ -24,7 +24,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class ArgParserTrain(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument('--env', type=str, default='HumanoidStandup', choices=['Cheetah', 'HumanoidStandup', 'HumanoidRandom','HumanoidBench','HumanoidChair','HumanoidStanding','HumanoidStandupVelocityEnv','MountainCarContinuous-v0'])
+        self.add_argument('--env', type=str, default='HumanoidStandup', choices=['Cheetah', 'HumanoidStandup', 'HumanoidRandom', 'HumanoidHybrid', 'HumanoidBench','HumanoidChair','HumanoidStanding','HumanoidStandupVelocityEnv','MountainCarContinuous-v0'])
         self.add_argument("--policy", default="SAC",choices=['SAC', 'PPO', 'TQC'])
         self.add_argument('--original', default=False, action='store_true', help='if set true, use the default power/strength parameters')
         self.add_argument('--debug', default=False, action='store_true')
@@ -51,6 +51,8 @@ class ArgParserTrain(argparse.ArgumentParser):
         self.add_argument("--imitation_data", default='./data/imitation_data_sample.npz', type=str)
         self.add_argument("--work_dir", default='./experiment/')
         self.add_argument("--load_dir", default=None, type=str)
+        self.add_argument("--standing_policy", default=None, type=str)
+        self.add_argument("--standup_policy", default=None, type=str)
 
         # Terrain hyperparameters
         self.add_argument('--max_height', default=0.1, type=float)
@@ -102,6 +104,8 @@ def env_function(args):
         return HumanoidStandupEnv
     elif args.env == "HumanoidRandom":
         return HumanoidStandupRandomEnv
+    elif args.env == "HumanoidHybrid":
+        return HumanoidStandupHybridEnv
     elif args.env == "HumanoidBench":
         return HumanoidBenchEnv
     elif args.env == "HumanoidChair":
@@ -155,7 +159,10 @@ def main():
         act_dim = env.action_space.n
     else:
         discrete = False
-        act_dim = env.action_space.shape[0]
+        if args.env == "HumanoidHybrid":
+            act_dim = 1
+        else:
+            act_dim = env.action_space.shape[0]
     
         start_time = time.time()
 
@@ -193,7 +200,7 @@ def main():
 
     if args.teacher_student:
         teacher_policy = SAC(68,
-        act_dim,
+        1,
         init_temperature=args.init_temperature,
         alpha_lr=args.alpha_lr,
         actor_lr=args.actor_lr,
@@ -211,7 +218,7 @@ def main():
     #     env.power_base = args.power
     #     # buf.load(os.path.join(args.load_dir+'/buffer','checkpoint.npz'))
         # policy.load(os.path.join(args.load_dir+'/model','best_model'),load_optimizer=True)
-    policy.load(os.path.join('experiment/HumanoidStandup_10-18-17-34_seed_0_varying_speed_0.2_0.8'+'/model','best_model'),load_optimizer=True)
+    # policy.load(os.path.join('experiment/HumanoidStandup_10-18-17-34_seed_0_varying_speed_0.2_0.8'+'/model','best_model'),load_optimizer=True)
     #     # env.set_chair_parameters(0, 20, 0.1)
     
     train_sac(policy, env, tb, logger, buf, args, video_dir, buffer_dir, model_dir, act_dim, teacher_policy, teacher_env)
@@ -353,8 +360,8 @@ def run_tests(policy, train_env, args, video_tag, teacher_policy=None):
     test_env.set_power(train_env.export_power())
     # test_env.set_chair_parameters(train_env.chair_angle_mean, train_env.chair_angle_range, train_env.height_diff)
     test_reward = []
-    # video_index = [np.random.random_integers(0, args.test_iterations-1)]
-    video_index = np.arange(0, args.test_iterations)
+    video_index = [np.random.random_integers(0, args.test_iterations-1)]
+    # video_index = np.arange(0, args.test_iterations)
     video_array = []
     for i in range(args.test_iterations):
         video = []
