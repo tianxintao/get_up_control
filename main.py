@@ -243,6 +243,8 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
         if args.policy == "SAC" or "TQC":
             if (t < args.start_timesteps):
                 action = np.clip(2 * np.random.random_sample(size=action_dim) - 1, -env.power, env.power)
+            elif episode_timesteps < 50:
+                action = np.random.normal(loc=0.0, scale=0.1, size=action_dim)
             else:
                 action = policy.sample_action(np.array(state["scalar"]), terrain=state["terrain"])
         elif args.policy == "PPO":
@@ -323,7 +325,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
             episode_num += 1
 
         if t % args.test_interval == 0:
-            test_reward, min_test_reward, video, test_env = run_tests(policy, env, args, True, teacher_policy)
+            test_reward, min_test_reward, video, test_env = run_tests(policy, env, args, True, teacher_policy, action_dim)
             tb.add_scalar("Test/Alpha", env.power_base, t)
             tb.add_scalar("Test/Reward", test_reward, t)
             for i,v in enumerate(video):
@@ -352,7 +354,7 @@ def train_sac(policy, env, tb, logger, replay_buffer, args, video_dir, buffer_di
         t += 1
 
 
-def run_tests(policy, train_env, args, video_tag, teacher_policy=None):
+def run_tests(policy, train_env, args, video_tag, teacher_policy=None, action_dim=None):
     test_env_generator = env_function(args)
     test_env = test_env_generator(args, args.seed+10)
     test_env.teacher_policy = teacher_policy
@@ -368,11 +370,16 @@ def run_tests(policy, train_env, args, video_tag, teacher_policy=None):
         # test_traj, test_images, _ = run_one_episode(test_teacher_env, teacher_policy, args)
         # test_env.trajectoty_data = test_traj
         state, done = test_env.reset(test_time=True), False
+        episode_timesteps = 0
         episode_reward = 0
         while not done:
-            action = policy.select_action(np.array(state["scalar"]), terrain=state["terrain"])
+            if episode_timesteps < 50:
+                action = np.random.normal(loc=0.0, scale=0.1, size=action_dim)
+            else:
+                action = policy.select_action(np.array(state["scalar"]), terrain=state["terrain"])
             state, reward, done, _ = test_env.step(action, test_time=True)
             episode_reward += reward
+            episode_timesteps += 1
         if i in video_index and video_tag:
         #     length = len(test_env.images)
         #     test_images = test_images[:length]

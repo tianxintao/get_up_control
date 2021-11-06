@@ -120,7 +120,7 @@ class HumanoidStandupEnv():
         self.action_space = self.env.action_spec()
         if self.args.imitation_reward:
             self.trajectoty_data = np.load(self.args.imitation_data)
-        self.reset()
+        self.reset(initial_reset=True)
         self.obs_shape = self._state["scalar"].shape
         self.physics.reload_from_xml_path('data/humanoid_static.xml')
         
@@ -153,7 +153,7 @@ class HumanoidStandupEnv():
             self.qvel.append(self.physics.data.qvel.copy())
         return self._state, self._reward, self._done, reaction_force
 
-    def reset(self, test_time=False):
+    def reset(self, test_time=False, initial_reset=False):
         self._step_num = 0
         self.reset_count += 1
         if test_time: self.images = []
@@ -165,7 +165,7 @@ class HumanoidStandupEnv():
             self.com_vel = []
             self.qpos = []
             self.qvel = []
-        if self.custom_reset:
+        if self.custom_reset or initial_reset:
             # while True:
             #     self.physics.after_reset()
             #     if self.physics.data.ncon <= 0: break
@@ -193,13 +193,13 @@ class HumanoidStandupEnv():
                     "qpos": self.physics.data.qpos.copy(),
                     "qvel": self.physics.data.qvel.copy()
                 }
-            action = np.zeros(self.action_space.shape)
-            self.env.step(action)
+            # action = np.zeros(self.action_space.shape)
+            # self.env.step(action)
             # while self.env.physics.center_of_mass_position()[2] > 0.25:
-            while self.env.physics.center_of_mass_velocity()[2] < 0 or reset_step < 50:
-                reset_step += 1
-                self.env.step(action)
-                if test_time: self.images.append(self.render())
+            # while self.env.physics.center_of_mass_velocity()[2] < 0:
+            #     reset_step += 1
+            #     self.step(action, test_time=True)
+                # if test_time: self.images.append(self.render())
             self._step_num = 0
 
         # with self.env.physics.reset_context():
@@ -225,7 +225,7 @@ class HumanoidStandupEnv():
             return
         self.power = np.clip(self.power_base + np.random.randn() * std, self.power_end, 1)
 
-    def adjust_power(self, test_reward, replay_buffer, threshold=40):
+    def adjust_power(self, test_reward, replay_buffer, threshold=50):
         if self.original or self.curriculum_finished:
             return False
         if test_reward > threshold:
@@ -261,7 +261,7 @@ class HumanoidStandupEnv():
 
     @property
     def _done(self):
-        if self._step_num >= 400:
+        if self._step_num >= 250:
             return True
         return False
 
@@ -296,9 +296,10 @@ class HumanoidStandupEnv():
     
     @property
     def upright(self):
+
         upright = rewards.tolerance(self.physics.torso_upright(),
-                                    bounds=(0.9, float('inf')), sigmoid='linear',
-                                    margin=0.9, value_at_margin=0)
+                                bounds=(0.9, float('inf')), sigmoid='linear',
+                                margin=0.9, value_at_margin=0)
         return upright
 
     # @property
@@ -382,6 +383,12 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
         video = []
         self.teacher_env.power = self.args.teacher_power
         state, done = self.teacher_env.reset(test_time=True), False
+        self.teacher_env.xquat = []
+        self.teacher_env.extremities = []
+        self.teacher_env.com = []
+        self.teacher_env.com_vel = []
+        self.teacher_env.qpos = []
+        self.teacher_env.qvel = []
         episode_reward = 0
         while not done:        
             action = self.teacher_policy.select_action(state["scalar"], terrain=state["terrain"])
@@ -397,7 +404,7 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
             }
         return  trajectory, self.teacher_env.images, self.teacher_env.initial_state
     
-    def reset(self, test_time=False):
+    def reset(self, test_time=False, initial_reset=False):
         self._step_num = 0
         self.reset_count += 1
         if not test_time: self.sample_power()
@@ -427,7 +434,7 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
                 repeat = False
                 # if self.physics.data.ncon == 0: repeat = False
         else:
-            if not self.args.teacher_student or self.teacher_policy == None:
+            if not self.args.teacher_student or self.teacher_policy == None or initial_reset:
                 self.timestep = self.env.reset()
                 self.interpolated_trajectory = self.trajectoty_data
                 
@@ -503,6 +510,7 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
         if self.args.imitation_reward:
             _state.append(self.interpolated_trajectory["qpos"][self._step_num+10])
             _state.append(self.interpolated_trajectory["qpos"][self._step_num+20])
+            # _state.append([self.speed])
         _state.append([self.power])
         return {
             "scalar": np.concatenate(_state),
@@ -549,9 +557,10 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
         return np.exp(-np.sum(distance/4))
 
 
+
 # class HumanoidStandupCollectEnv(HumanoidStandupEnv):
 
-#     def reset(self, test_time=False):
+#     def reset(self, test_time=False):   
 #         state = super().reset(test_time=test_time)
 #         self.xquat = []
 #         self.extremities = []
@@ -609,6 +618,7 @@ class HumanoidStandupHybridEnv(HumanoidStandupEnv):
         self.action = a
         self._step_num += 1
         with torch.no_grad():
+            self.obs = self.env._task.get_observation(self.physics)
             standup_state = np.array(self._state["scalar"])
             standup_state[-1] = 0.4
             standup_action = self.standup_policy.select_action(standup_state)
