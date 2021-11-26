@@ -204,7 +204,7 @@ class Trainer():
             if done:
                 self.logger.log_train_episode(t, episode_num, episode_timesteps, episode_reward, self.policy.loss_dict, env, self.args)
                 self.policy.reset_record()
-                state, done = env.reset(store_buf=(best_reward < 20)), False
+                state, done = env.reset(store_buf=True), False
                 episode_reward = 0
                 episode_timesteps = 0
                 episode_num += 1
@@ -224,7 +224,7 @@ class Trainer():
             t += 1
 
 
-    def update_power(self, env, criteria, t, threshold=40):
+    def update_power(self, env, criteria, t, threshold=60):
         if not self.curriculum:
             return False
         if criteria > threshold:
@@ -236,7 +236,7 @@ class Trainer():
 
         else:
             current_stage_length = t - self.last_power_update
-            if current_stage_length > min(800000, max(160000, 1.5 * self.last_duration)) and env.power_base < 1.0:
+            if current_stage_length > min(1000000, max(300000, 1.5 * self.last_duration)) and env.power_base < 1.0:
                 env.power_base = env.power_base / 0.95
                 env.power_end = env.power_base
                 return False

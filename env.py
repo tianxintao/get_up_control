@@ -81,7 +81,7 @@ class HumanoidStandupEnv():
     def _standing(self):
         standing = rewards.tolerance(self.physics.head_height(),
                                      bounds=(self._STAND_HEIGHT, float('inf')),
-                                     margin=self._STAND_HEIGHT / 4)
+                                     margin=self._STAND_HEIGHT / 4, value_at_margin=0.2, sigmoid='long_tail')
         return standing
 
     @property
