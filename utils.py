@@ -137,6 +137,13 @@ def randomize_limited_and_rotational_joints(physics, k=0.1):
             if joint_type == hinge or joint_type == slide:
                 qpos[joint_name] = random.uniform(k * range_min, k * range_max)
 
+def quaternion_multiply(quaternion1, quaternion2):
+    a1, b1, c1, d1 = quaternion1
+    a2, b2, c2, d2 = quaternion2
+    return np.array([a1 * a2 - b1 * b2 - c1 * c2 - d1 * d2,
+                     a1 * b2 + b1 * a2 + c1 * d2 - d1 * c2,
+                     a1 * c2 - b1 * d2 + c1 * a2 + d1 * b2,
+                     a1 * d2 + b1 * c2 - c1 * b2 + d1 * a2])
 
 def interpolate_motion(data, interpolation_coeff=0.25):
     # data = np.load(trajectory_file)
