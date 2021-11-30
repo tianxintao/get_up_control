@@ -6,6 +6,8 @@ from dm_control.utils import rewards
 from dm_control.suite.humanoid import Humanoid, Physics
 from dm_control.rl import control
 from dm_control.suite import common
+from utils import quaternion_multiply
+import dm_env
 from SAC import SAC
 import os
 import numpy as np
@@ -16,6 +18,25 @@ import cv2
 import copy
 import torch
 
+STANDING_POSE = np.array([
+                [ 1.     ,  0.     ,  0.     , -0.     ],
+                [ 1.     ,  0.     ,  0.     , -0.     ],
+                [ 0.99726,  0.00106, -0.04865,  0.00822],
+                [ 0.99666, -0.02682, -0.05084,  0.00691],
+                [ 0.99172, -0.05925, -0.04908, -0.02655],
+                [ 0.97489, -0.05076,  0.20083, -0.0405 ],
+                [ 0.99674, -0.00639,  0.02945, -0.00895],
+                [ 0.99172, -0.05925, -0.04908, -0.02655],
+                [ 0.97489, -0.05076,  0.20083, -0.0405 ],
+                [ 0.99674, -0.00639,  0.02945, -0.00895],
+                [ 0.95135,  0.14246,  0.26623, -0.04127],
+                [ 0.51532, -0.01268,  0.73672, -0.43528],
+                [ 0.51532, -0.01268,  0.73672, -0.43528],
+                [ 0.95135,  0.14246,  0.26623, -0.04127],
+                [ 0.51532, -0.01268,  0.73672, -0.43528],
+                [ 0.51532, -0.01268,  0.73672, -0.43528],
+                ])
+STANDING_ORIENTATION = 0.986
 
 class HumanoidStandupEnv():
     _STAND_HEIGHT = 1.55
@@ -29,27 +50,32 @@ class HumanoidStandupEnv():
         self.power_end = args.power_end
         self.trajectoty_data = None
         self.action_space = self.env.action_spec()
-        self.reset(initial_reset=True)
+        self.reset()
         self.obs_shape = self._state.shape
         self.physics.reload_from_xml_path('data/humanoid_static.xml')
         self.buf = None
 
     def step(self, a, test_time=False):
         self._step_num += 1
-        self.timestep = self.env.step(a)
+        self.env.step(a)
+        self.obs = self.env._task.get_observation(self.physics)
         return self._state, self._reward, self._done, None
 
-    def reset(self, test_time=False, initial_reset=False, store_buf=False):
+    def reset(self, test_time=False, store_buf=False):
         self._step_num = 0
+        self._initial_steps = True
         if not test_time: self.sample_power()
-        self.timestep = self.env.reset()
+        self.env.reset()
+        self.obs = self.env._task.get_observation(self.physics)
         current_state = self._state
         for _ in range(50):
             action = np.random.normal(loc=0.0, scale=0.1, size=self.action_space.shape[0])
-            self.timestep = self.env.step(action)
+            self.env.step(action)
+            self.obs = self.env._task.get_observation(self.physics)
             if store_buf:
                 self.buf.add(current_state, action, self._state, self._reward, self.terminal_signal)
                 current_state = self._state
+        self._initial_steps = False
         self.terminal_signal = False
         return self._state
 
@@ -66,7 +92,7 @@ class HumanoidStandupEnv():
     @property
     def _state(self):
         _state = []
-        for part in self.timestep.observation.values():
+        for part in self.obs.values():
             _state.append(part if not np.isscalar(part) else [part])
         _state.append([self.power])
         return np.concatenate(_state)
@@ -94,7 +120,10 @@ class HumanoidStandupEnv():
     @property
     def _dont_move(self):
         horizontal_velocity = self.physics.center_of_mass_velocity()[[0, 1]]
-        return rewards.tolerance(horizontal_velocity, bounds=[-0.3, 0.3], margin=1.2).mean()
+        if not self._standing_reward:
+            return rewards.tolerance(horizontal_velocity, bounds=[-0.3, 0.3], margin=1.2).mean()
+        else:
+            return rewards.tolerance(horizontal_velocity, margin=1.2).mean()
 
     @property
     def _closer_feet(self):
@@ -110,14 +139,49 @@ class HumanoidStandupEnv():
     def _upright(self):
         if self.physics.center_of_mass_position()[2] < 0.5:
             return 1.0
-        upright = rewards.tolerance(self.physics.torso_upright(),
-                                    bounds=(0.9, float('inf')), sigmoid='linear',
-                                    margin=1.9, value_at_margin=0)
+        if self._standing_reward:
+            upright = rewards.tolerance(self.physics.torso_upright(),
+                                        bounds=(0.96, float('inf')), sigmoid='linear',
+                                        margin=0.16, value_at_margin=0)
+        else:
+            upright = rewards.tolerance(self.physics.torso_upright(),
+                                        bounds=(0.9, float('inf')), sigmoid='linear',
+                                        margin=1.9, value_at_margin=0)
+        
         return upright
+    
+    @property
+    def _standing_pose(self):
+        body_rotation = self.physics.data.xquat[1:]
+        root_rotation = body_rotation[0]
+        root_conjugate = np.array(root_rotation)
+        root_conjugate[-3:] = -root_conjugate[-3:]
+        body_rotation_offset = [quaternion_multiply(root_conjugate, r) for r in body_rotation]
+
+        epsilon = 1e-7
+        product = body_rotation_offset * STANDING_POSE
+        angle_diff = 2 * (np.arccos(np.clip(np.abs(product.sum(axis=-1)), -1+epsilon, 1-epsilon)) ** 2)
+
+        return np.exp(-angle_diff.mean()/2)
 
     @property
     def _reward(self):
-        return self._upright * self._standing * self._small_control * self._dont_move * self._closer_feet
+        # self._standing_reward = self.physics.center_of_mass_position()[2] > 0.75 and (not self._initial_steps)
+        self._standing_reward = False
+        if not self._standing_reward:
+            return self._upright * self._standing * self._small_control * self._dont_move * self._closer_feet
+        else:
+            body_height = rewards.tolerance(self.physics.center_of_mass_position()[2],
+                                     bounds=(0.80, float('inf')),
+                                     margin=0.1, value_at_margin=0.3)
+            # print("body height reward: {:4f}".format(body_height))
+            # print("upright reward: {:4f}".format(self._upright))
+            # print("pose tracking reward: {:.4f}".format(self._standing_pose))
+            # print("move reward: {:.4f}".format(self._dont_move))
+            # print("final reward: {:.4f}".format(body_height * self._upright * self._standing_pose * self._dont_move))
+            return body_height * self._upright * self._standing_pose * self._dont_move
+            
+
 
 class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
     qpos_to_ctrl_index = np.array([1, 0, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 12, 14, 13, 15, 16, 17, 18, 19, 20])
@@ -404,7 +468,7 @@ class HumanoidStandingEnv(HumanoidStandupEnv):
         self.default_qpos[23] = -0.3
         self.default_qpos[26] = 0.3
 
-    def reset(self, test_time=False):
+    def reset(self, test_time=False, store_buf=False):
         self.images = []
         repeat = True
         while repeat:
@@ -422,7 +486,7 @@ class HumanoidStandingEnv(HumanoidStandupEnv):
             self.physics.after_reset()
             if self.physics.data.ncon == 0: repeat = False
 
-        self.obs = self.env._task.get_observation(self.env._physics)
+        self.obs = self.env._task.get_observation(self.physics)
         self._step_num = 0
         self.terminal_signal = False
         if not test_time: self.sample_power()
@@ -458,7 +522,7 @@ class HumanoidStandingEnv(HumanoidStandupEnv):
 
     @property
     def _reward(self):
-        return super()._reward * self._small_control
+        return self._upright * self._standing * self._small_control * self._dont_move * self._closer_feet
 
     @property
     def _standing(self):
@@ -472,6 +536,16 @@ class HumanoidStandingEnv(HumanoidStandupEnv):
                                         value_at_margin=0,
                                         sigmoid='quadratic').mean()
         return (2 + 3 * control_val) / 5
+
+    @property
+    def _closer_feet(self):
+        left_feet_pos = self.physics.data.xpos[10, :2]
+        right_feet_pos = self.physics.data.xpos[7, :2]
+        feet_distance = np.sqrt(((right_feet_pos - left_feet_pos) ** 2).sum())
+        feet_reward = rewards.tolerance(feet_distance,
+                                        bounds=(0, 0.5), sigmoid='quadratic',
+                                        margin=0.1, value_at_margin=0.1)
+        return (2 + feet_reward) / 3
 
 
 class Humanoid2DStandupEnv(HumanoidStandupEnv):

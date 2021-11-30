@@ -15,10 +15,11 @@ from SAC import SAC
 from TQC import TQC
 from torch.utils.tensorboard import SummaryWriter
 from env import HumanoidStandupEnv, HumanoidStandingEnv, HumanoidStandupVelocityEnv, HumanoidStandupHybridEnv
-from utils import RLLogger, ReplayBuffer
+from utils import RLLogger, ReplayBuffer, quaternion_multiply
 import argparse
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+np.set_printoptions(precision=5, suppress=True)
 
 
 class ArgParserTrain(argparse.ArgumentParser):
@@ -73,6 +74,7 @@ class ArgParserTrain(argparse.ArgumentParser):
         self.add_argument("--critic_lr", default=1e-4, type=float)
         self.add_argument("--tau", default=0.005)
         self.add_argument("--start_timesteps", default=10000, type=int)
+        self.add_argument('--mixture_actor', default=False, action='store_true')
 
         self.add_argument('--render_interval', type=int, default=100, help='render every N')
         self.add_argument('--log_interval', type=int, default=100, help='log every N')
@@ -123,6 +125,9 @@ class Trainer():
                      critic_target_update_freq=args.critic_target_update_freq,
                      args=args)
         ts_info = {}
+
+        if args.test_policy:
+            self.policy.load(os.path.join(args.load_dir + '/model', 'best_model'), load_optimizer=False)
 
         if args.teacher_student:
             teacher_policy = SAC(68,
@@ -177,7 +182,9 @@ class Trainer():
         while t < int(self.args.max_timesteps):
 
             # Select action randomly or according to policy
-            if (t < self.args.start_timesteps):
+            if self.args.test_policy:
+                action = self.policy.select_action(state)
+            elif (t < self.args.start_timesteps):
                 action = np.clip(2 * np.random.random_sample(size=act_dim) - 1, -env.power, env.power)
             else:
                 action = self.policy.sample_action(state)
@@ -186,6 +193,14 @@ class Trainer():
 
             if self.args.test_policy:
                 image_l = env.render()
+                # body_rotation = env.physics.named.data.xquat[1:]
+                # root_rotation = body_rotation[0]
+                # root_conjugate = np.array(root_rotation)
+                # root_conjugate[-3:] = -root_conjugate[-3:]
+                # body_rotation_offset = [quaternion_multiply(root_conjugate, r) for r in body_rotation]
+                # orientation.append(env.physics.torso_upright())
+                # xquat_avg.append(body_rotation_offset)
+                # print(body_rotation_offset)
                 # image_r = images[episode_timesteps]
                 # cv2.imshow('image',np.concatenate((image_l,image_r), axis=-2))
                 cv2.imshow('image', image_l)
@@ -217,7 +232,7 @@ class Trainer():
                 criteria = test_reward if self.args.avg_reward else min_test_reward
                 self.curriculum = self.update_power(env, criteria, t)
                 if (test_reward > best_reward):
-                    self.policy.save(os.path.join(self.video_dir, 'best_model'))
+                    self.policy.save(os.path.join(self.model_dir, 'best_model'))
                     best_reward = test_reward
                     self.logger.info("Best model saved")
                 self.logger.log_test(test_reward, min_test_reward, self.curriculum, env.power_base)
