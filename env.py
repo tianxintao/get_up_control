@@ -80,7 +80,7 @@ class HumanoidStandupEnv():
         return self._state
 
     def render(self, mode=None):
-        return self.env.physics.render(height=480, width=480, camera_id=1)
+        return self.env.physics.render(height=384, width=384, camera_id=1)
 
     def sample_power(self, std=0.04):
         self.power = np.clip(self.power_base + np.random.randn() * std, self.power_end, 1)
@@ -169,7 +169,7 @@ class HumanoidStandupEnv():
         # self._standing_reward = self.physics.center_of_mass_position()[2] > 0.75 and (not self._initial_steps)
         self._standing_reward = False
         if not self._standing_reward:
-            return self._upright * self._standing * self._small_control * self._dont_move * self._closer_feet
+            return self._upright * self._standing * self._dont_move * self._closer_feet
         else:
             body_height = rewards.tolerance(self.physics.center_of_mass_position()[2],
                                      bounds=(0.80, float('inf')),

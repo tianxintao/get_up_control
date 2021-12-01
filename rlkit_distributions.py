@@ -175,7 +175,7 @@ class GaussianMixture(Distribution):
         lp = torch.clamp((log_weights + log_p), -20, 20)
         m = lp.max(dim=1)[0]  # log-sum-exp numerical stability trick
         log_p_mixture = m + torch.log(torch.exp(lp - m.unsqueeze(1)).sum(dim=1))
-        log_p_mixture -= torch.log(scalar[:, None] * (F.relu(1 - torch.tanh(value).pow(2)) + 1e-6)).sum(-1)
+        log_p_mixture -= torch.log((F.relu(1 - torch.tanh(value).pow(2)) + 1e-6)).sum(-1)
         return log_p_mixture.unsqueeze(1)
         # log_p = [self.normals[i].log_prob(value) for i in range(self.num_gaussians)]
         # log_p = torch.stack(log_p, -1)
@@ -202,7 +202,7 @@ class GaussianMixture(Distribution):
                 ).sample()
         )
         z.requires_grad_()
-        c = self.categorical.sample()[:, :, None]
+        c = self.categorical.rsample()[:, :, None]
         pi = torch.matmul(z, c).squeeze(2)
         mu = torch.matmul(self.normal_means, c).squeeze(2).detach()            
         return mu, pi

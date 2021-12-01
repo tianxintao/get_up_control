@@ -58,7 +58,6 @@ class Actor(nn.Module):
         )
 
         self.outputs = dict()
-        self.apply(weight_init)
 
     def forward(self, state, compute_pi=True, compute_log_pi=True):
 
@@ -114,7 +113,6 @@ class GMMActor(nn.Module):
         )
 
         self.outputs = dict()
-        self.apply(weight_init)
 
     def forward(self, state, compute_pi=True, compute_log_pi=True):
 
@@ -132,7 +130,7 @@ class GMMActor(nn.Module):
 
         mu = mu.reshape((-1, self.action_dim, self.n_mixture))
         std = log_std.exp().reshape((-1, self.action_dim, self.n_mixture))
-        distribution = GaussianMixture(mu, std, weights) 
+        distribution = GaussianMixture(mu, std, weights)
 
         mu, pi = distribution.rsample()
 
@@ -141,7 +139,7 @@ class GMMActor(nn.Module):
         else:
             log_pi = None
 
-        return torch.tanh(mu), torch.tanh(pi), log_pi, log_std
+        return power[:, None] * torch.tanh(mu), power[:, None] * torch.tanh(pi), log_pi, log_std
 
 
 
@@ -162,7 +160,6 @@ class Critic(nn.Module):
             nn.Linear(1024, 1)
         )
 
-        self.apply(weight_init)
 
     def forward(self, state, action):
         state_action = torch.cat([state, action], dim=1)
