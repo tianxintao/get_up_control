@@ -9,6 +9,7 @@ import sys
 import copy
 import torch
 import copy
+import math
 from tensorboardX import SummaryWriter
 from PPO import PPO
 from SAC import SAC
@@ -35,11 +36,13 @@ class ArgParserTrain(argparse.ArgumentParser):
         self.add_argument('--imitation_reward', default=False, action='store_true')
         self.add_argument('--test_policy', default=False, action='store_true')
         self.add_argument('--teacher_student', default=False, action='store_true')
-        self.add_argument('--changing_velocity', default=False, action='store_true')
+        self.add_argument("--teacher_power", default=0.4, type=float)
+        self.add_argument("--teacher_dir", default=None, type=str)
         self.add_argument("--seed", default=0, type=int)
         self.add_argument("--power", default=1.0, type=float)
         self.add_argument("--power_end", default=0.4, type=float)
-        self.add_argument("--teacher_power", default=0.4, type=float)
+        self.add_argument("--slow_speed", default=0.2, type=float)
+        self.add_argument("--fast_speed", default=0.8, type=float)
         self.add_argument('--max_timesteps', type=int, default=10000000, help='Number of simulation steps to run')
         self.add_argument('--test_interval', type=int, default=20000, help='Number of simulation steps between tests')
         self.add_argument('--test_iterations', type=int, default=10, help='Number of simulation steps between tests')
@@ -53,16 +56,6 @@ class ArgParserTrain(argparse.ArgumentParser):
         self.add_argument("--load_dir", default=None, type=str)
         self.add_argument("--standing_policy", default=None, type=str)
         self.add_argument("--standup_policy", default=None, type=str)
-
-        # Terrain hyperparameters
-        self.add_argument('--max_height', default=0.1, type=float)
-        self.add_argument('--add_terrain', default=False, action='store_true')
-        self.add_argument('--terrain_dim', default=6, type=int)
-        self.add_argument('--heightfield_dim', default=9, type=int)
-
-        # Force/contact hypeparameters
-        self.add_argument("--predict_force", action="store_true")
-        self.add_argument("--force_dim", type=int, default=1)
 
         # SAC hyperparameters
         self.add_argument("--batch_size", default=1024, type=int)
@@ -81,41 +74,31 @@ class ArgParserTrain(argparse.ArgumentParser):
         self.add_argument("--tag", default="")
 
 
-def env_function(args):
-    if args.env == 'HumanoidStandup':
-        if args.changing_velocity:
-            return HumanoidStandupVelocityEnv
-        return HumanoidStandupEnv
-    elif args.env == "HumanoidHybrid":
-        return HumanoidStandupHybridEnv
-    elif args.env == "HumanoidStanding":
-        return HumanoidStandingEnv
-
-
 def main():
     args = ArgParserTrain().parse_args()
-    Trainer(args)
+    trainer = Trainer(args)
+    trainer.train_sac()
 
 
 class Trainer():
     def __init__(self, args):
+        self.args = args
         self.setup(args)
         self.logger.log_start(sys.argv, args)
-        env = self.create_env(args)
+        self.env = self.create_env(args)
         torch.manual_seed(args.seed)
         np.random.seed(args.seed)
 
-        obs_dim = env.obs_shape[0]
+        obs_dim = self.env.obs_shape[0]
         if args.env == "HumanoidHybrid":
-            act_dim = 1
+            self.act_dim = 1
         else:
-            act_dim = env.action_space.shape[0]
+            self.act_dim = self.env.action_space.shape[0]
 
-        self.buf = ReplayBuffer(obs_dim, act_dim, args, max_size=int(args.replay_buffer_size))
-        env.buf = self.buf
-        self.args = args
+        self.buf = ReplayBuffer(obs_dim, self.act_dim, args, max_size=int(args.replay_buffer_size))
+        self.env.buf = self.buf
 
-        self.policy = SAC(obs_dim, act_dim,
+        self.policy = SAC(obs_dim, self.act_dim,
                      init_temperature=args.init_temperature,
                      alpha_lr=args.alpha_lr,
                      actor_lr=args.actor_lr,
@@ -124,28 +107,25 @@ class Trainer():
                      discount=args.discount,
                      critic_target_update_freq=args.critic_target_update_freq,
                      args=args)
-        ts_info = {}
 
-        if args.test_policy:
+        if args.test_policy or args.load_dir:
             self.policy.load(os.path.join(args.load_dir + '/model', 'best_model'), load_optimizer=False)
 
         if args.teacher_student:
-            teacher_policy = SAC(68,
-                                 1,
-                                 init_temperature=args.init_temperature,
-                                 alpha_lr=args.alpha_lr,
-                                 actor_lr=args.actor_lr,
-                                 critic_lr=args.critic_lr,
-                                 tau=args.tau,
-                                 discount=args.discount,
-                                 critic_target_update_freq=args.critic_target_update_freq,
-                                 args=args)
-            teacher_policy.load(os.path.join(args.load_dir + '/model', 'best_model'), load_optimizer=False)
-            for param in teacher_policy.parameters():
+            self.teacher_policy = SAC(self.env.teacher_env.obs_shape[0], 
+                     self.env.teacher_env.action_space.shape[0],
+                     init_temperature=args.init_temperature,
+                     alpha_lr=args.alpha_lr,
+                     actor_lr=args.actor_lr,
+                     critic_lr=args.critic_lr,
+                     tau=args.tau,
+                     discount=args.discount,
+                     critic_target_update_freq=args.critic_target_update_freq,
+                     args=args)
+            self.teacher_policy.load(os.path.join(args.teacher_dir + '/model', 'best_model'), load_optimizer=False)
+            for param in self.teacher_policy.parameters():
                 param.requires_grad = False
-            env.teacher_policy = teacher_policy
-
-        self.train_sac(env,act_dim,ts_info)
+            self.env.set_teacher_policy(self.teacher_policy)
 
 
     def setup(self, args):
@@ -164,12 +144,23 @@ class Trainer():
         with open(os.path.join(experiment_dir, 'args.json'), 'w') as f:
             json.dump(vars(args), f, sort_keys=True, indent=4)
 
+    def env_function(self):
+        if self.args.env == 'HumanoidStandup':
+            if self.args.teacher_student:
+                return HumanoidStandupVelocityEnv
+            return HumanoidStandupEnv
+        elif self.args.env == "HumanoidHybrid":
+            return HumanoidStandupHybridEnv
+        elif self.args.env == "HumanoidStanding":
+            return HumanoidStandingEnv
+
     def create_env(self, args):
-        env_generator = env_function(args)
+        env_generator = self.env_function()
         return env_generator(args, args.seed)
 
-    def train_sac(self, env, act_dim, ts_info):
-        state, done = env.reset(store_buf=True), False
+    def train_sac(self):
+        store_buf = False if self.args.teacher_student else True
+        state, done = self.env.reset(store_buf=store_buf), False
         t = 0
         self.last_power_update = -np.inf
         self.last_duration = np.inf
@@ -185,30 +176,19 @@ class Trainer():
             if self.args.test_policy:
                 action = self.policy.select_action(state)
             elif (t < self.args.start_timesteps):
-                action = np.clip(2 * np.random.random_sample(size=act_dim) - 1, -env.power, env.power)
+                action = np.clip(2 * np.random.random_sample(size=self.act_dim) - 1, -self.env.power, self.env.power)
             else:
                 action = self.policy.sample_action(state)
 
-            next_state, reward, done, _ = env.step(a=action)
+            next_state, reward, done, _ = self.env.step(a=action)
 
-            if self.args.test_policy:
-                image_l = env.render()
-                # body_rotation = env.physics.named.data.xquat[1:]
-                # root_rotation = body_rotation[0]
-                # root_conjugate = np.array(root_rotation)
-                # root_conjugate[-3:] = -root_conjugate[-3:]
-                # body_rotation_offset = [quaternion_multiply(root_conjugate, r) for r in body_rotation]
-                # orientation.append(env.physics.torso_upright())
-                # xquat_avg.append(body_rotation_offset)
-                # print(body_rotation_offset)
-                # image_r = images[episode_timesteps]
-                # cv2.imshow('image',np.concatenate((image_l,image_r), axis=-2))
-                cv2.imshow('image', image_l)
-                cv2.waitKey(2)
+            # if self.args.test_policy:
+            #     image_l = self.env.render()
+            #     cv2.imshow('image', image_l)
+            #     cv2.waitKey(2)
 
             episode_timesteps += 1
-
-            self.buf.add(state, action, next_state, reward, env.terminal_signal)
+            self.buf.add(state, action, next_state, reward, self.env.terminal_signal)
             state = next_state
             episode_reward += reward
 
@@ -217,25 +197,25 @@ class Trainer():
                 self.policy.train(self.buf, self.args.batch_size)
 
             if done:
-                self.logger.log_train_episode(t, episode_num, episode_timesteps, episode_reward, self.policy.loss_dict, env, self.args)
+                self.logger.log_train_episode(t, episode_num, episode_timesteps, episode_reward, self.policy.loss_dict, self.env, self.args)
                 self.policy.reset_record()
-                state, done = env.reset(store_buf=True), False
+                state, done = self.env.reset(store_buf=store_buf), False
                 episode_reward = 0
                 episode_timesteps = 0
                 episode_num += 1
 
             if t % self.args.test_interval == 0:
-                test_reward, min_test_reward, video = self.run_tests(env.power_base)
+                test_reward, min_test_reward, video = self.run_tests(self.env.power_base, self.policy)
                 for i, v in enumerate(video):
                     if len(v) != 0:
                         imageio.mimsave(os.path.join(self.video_dir, 't_{}_{}.mp4'.format(t, i)), v, fps=30)
                 criteria = test_reward if self.args.avg_reward else min_test_reward
-                self.curriculum = self.update_power(env, criteria, t)
+                self.curriculum = self.update_power(self.env, criteria, t)
                 if (test_reward > best_reward):
                     self.policy.save(os.path.join(self.model_dir, 'best_model'))
                     best_reward = test_reward
                     self.logger.info("Best model saved")
-                self.logger.log_test(test_reward, min_test_reward, self.curriculum, env.power_base)
+                self.logger.log_test(test_reward, min_test_reward, self.curriculum, self.env.power_base)
             t += 1
 
 
@@ -259,22 +239,25 @@ class Trainer():
         return True
 
 
-    def run_tests(self, power_base, teacher_policy=None):
-        test_env_generator = env_function(self.args)
+    def run_tests(self, power_base, test_policy):
+        np.random.seed(self.args.seed)
+        test_env_generator = self.env_function()
         test_env = test_env_generator(self.args, self.args.seed + 10)
         test_env.power = power_base
         if self.args.teacher_student:
-            test_env.teacher_policy = teacher_policy
+            test_env.set_teacher_policy(self.teacher_policy)
         test_reward = []
-        video_index = [np.random.random_integers(0, self.args.test_iterations - 1)]
+        # video_index = [np.random.random_integers(0, self.args.test_iterations - 1)]
+        video_index = np.arange(10)
+        speed_profile = np.linspace(self.args.slow_speed, self.args.fast_speed, num=self.args.test_iterations, endpoint=True)
         video_array = []
         for i in range(self.args.test_iterations):
             video = []
-            state, done = test_env.reset(test_time=True), False
+            state, done = test_env.reset(test_time=True, speed=speed_profile[i]), False
             episode_timesteps = 0
             episode_reward = 0
             while not done:
-                action = self.policy.select_action(state)
+                action = test_policy.select_action(state)
                 state, reward, done, _ = test_env.step(action, test_time=True)
                 episode_reward += reward
                 episode_timesteps += 1

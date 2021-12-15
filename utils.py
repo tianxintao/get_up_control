@@ -1,6 +1,8 @@
+from matplotlib.pyplot import axis
 import torch
 import numpy as np
 import os
+import math
 import logging
 # from dm_control.mujoco.wrapper import mjbindings
 from scipy import interpolate
@@ -45,6 +47,7 @@ class ReplayBuffer(object):
         )
     
     def save(self, filename):
+        print("Got here")
         data = {
             'state': self.state,
             'action': self.action,
@@ -54,7 +57,7 @@ class ReplayBuffer(object):
             'ptr': self.ptr,
             'size': self.size
         }
-        np.savez(filename,**data)
+        np.savez(filename, **data)
 
     def load(self, filename):
         # with np.load(filename) as data:
@@ -66,6 +69,46 @@ class ReplayBuffer(object):
         self.not_done = data['not_done']
         self.ptr = data['ptr']
         self.size = data['size']
+
+
+# class DistillBuffer(ReplayBuffer):
+#     def __init__(self, state_dim, action_dim, args, max_size=int(1e6)):
+#         super().__init__(state_dim, action_dim, args, max_size)
+#         self.velocity = np.zeros((max_size, 1))
+
+#     def add(self, state, action, next_state, reward, done, velocity):
+#         super().add(state, action, next_state, reward, done)
+#         self.velocity[self.ptr] = velocity
+
+#     def sample(self, batch_size):
+#         ind = np.random.randint(0, self.size, size=batch_size)
+            
+#         return (
+#             torch.FloatTensor(self.state[ind]).to(self.device),
+#             torch.FloatTensor(self.action[ind]).to(self.device),
+#             torch.FloatTensor(self.next_state[ind]).to(self.device),
+#             torch.FloatTensor(self.reward[ind]).to(self.device),
+#             torch.FloatTensor(self.not_done[ind]).to(self.device),
+#             torch.FloatTensor(self.velocity[ind]).to(self.device)
+#         )
+    
+#     def save(self, filename):
+#         data = {
+#             'state': self.state,
+#             'action': self.action,
+#             'next_state': self.next_state,
+#             'reward': self.reward,
+#             'not_done': self.not_done,
+#             'ptr': self.ptr,
+#             'size': self.size,
+#             'velocity': self.velocity,
+#         }
+#         np.savez(filename,**data)
+
+#     def load(self, filename):
+#         super().load(filename)
+#         data = np.load(filename)
+#         self.velocity = data['velocity']
 
 
 def make_dir(dir_path):
@@ -105,9 +148,15 @@ class RLLogger(object):
             console_output += "|C_Loss: {:.3f}".format(np.array(loss_dict["critic"]).mean())
             console_output += "|T_Loss: {:.3f}".format(np.array(loss_dict["temperature"]).mean())
             console_output += "|T: {:.3f}".format(np.array(loss_dict["temperature_value"]).mean())
-            if args.changing_velocity:
+            if args.teacher_student:
                 console_output += "|Velocity: {:.3f}".format(env.speed)
 
+        self.logger.info(console_output)
+
+    def log_episode_collection(self, t, episode_num, episode_timesteps, episode_reward, env):
+        console_output = "Total T: {t} Episode Num: {episode_num} Episode T: {episode_timesteps} Reward: {episode_reward:.3f} | Velocity: {speed:.3f}" \
+            .format(t=t + 1, episode_num=episode_num + 1, episode_timesteps=episode_timesteps,
+                    episode_reward=episode_reward, speed=env.speed)
         self.logger.info(console_output)
 
     def log_test(self, test_reward, min_test_reward, curriculum, power):
@@ -116,6 +165,18 @@ class RLLogger(object):
                     format(test_reward, min_test_reward, curriculum))
         self.logger.info("-------------------------------------------------")
         self.logger.info("Current power: {:.3f}".format(power))
+
+    def log_data_collection(self, iteration):
+        self.logger.info("-------------------------------------------------")
+        self.logger.info("Starting #{} data collection procedure". \
+                    format(iteration))
+        self.logger.info("-------------------------------------------------")
+    
+    def log_policy_training(self, iteration):
+        self.logger.info("-------------------------------------------------")
+        self.logger.info("Starting #{} policy training procedure". \
+                    format(iteration))
+        self.logger.info("-------------------------------------------------")
 
 def randomize_limited_and_rotational_joints(physics, k=0.1):
     random = np.random
@@ -150,46 +211,55 @@ def interpolate_motion(data, interpolation_coeff=0.25):
     xquat = data["xquat"].reshape(data["xquat"].shape[0],-1,4).copy()
     extremities = data["extremities"].copy()
     com_dist = data["com"].copy()
-    com_vel = data["com_vel"][:, 2].copy()
     qpos = data["qpos"].copy()
     qvel = data["qvel"].copy()
-    first_index = np.argwhere(com_vel>0)[0][0]
+    com_ori = data["com_ori"].copy()
     l = xquat.shape[0]
 
-    timestamp_ori = np.linspace(0, l-first_index, num=l-first_index, endpoint=True)
-    timestamp_new = interpolation_coeff * timestamp_ori
+    timestamp_ori = np.linspace(0, l, num=l, endpoint=True)
+    timestamp_new = np.linspace(0, l, num=math.ceil(l/interpolation_coeff), endpoint=True)
 
-    for j in range(qpos.shape[1]):
-        curve = interpolate.splrep(timestamp_ori, qpos[first_index:,j])
-        qpos[first_index:,j] = interpolate.splev(timestamp_new, curve, der=0)
-
-    for j in range(qvel.shape[1]):
-        curve = interpolate.splrep(timestamp_ori, qvel[first_index:,j])
-        qvel[first_index:,j] = interpolate.splev(timestamp_new, curve, der=0) * interpolation_coeff
-
-    for j in range(com_dist.shape[1]):
-        curve = interpolate.splrep(timestamp_ori, com_dist[first_index:,j])
-        com_dist[first_index:,j] = interpolate.splev(timestamp_new, curve, der=0)
+    com_ori_new = []
+    for j in range(com_ori.shape[1]):
+        curve = interpolate.splrep(timestamp_ori, com_ori[:,j])
+        com_ori_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None])
     
-    for j in range(extremities.shape[1]):
-        curve = interpolate.splrep(timestamp_ori, extremities[first_index:,j])
-        extremities[first_index:,j] = interpolate.splev(timestamp_new, curve, der=0)
+    qpos_new = []
+    for j in range(qpos.shape[1]):
+        curve = interpolate.splrep(timestamp_ori, qpos[:,j])
+        qpos_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None])
 
-    for j in range(xquat.shape[1]):
-        rotations = xquat[first_index:,j,:]
-        rotations = R.from_quat(rotations[:,[1,2,3,0]])
-        slerp = Slerp(timestamp_ori, rotations)
-        # timestamp_new[0] = 1.0
-        interp_rots = slerp(timestamp_new).as_quat()
-        interp_rots[first_index:,[0,1,2,3]] = interp_rots[first_index:,[3,0,1,2]]
-        xquat[first_index:,j,:] = interp_rots
+    qvel_new = []
+    for j in range(qvel.shape[1]):
+        curve = interpolate.splrep(timestamp_ori, qvel[:,j])
+        qvel_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None] * interpolation_coeff)
+
+    com_new = []
+    for j in range(com_dist.shape[1]):
+        curve = interpolate.splrep(timestamp_ori, com_dist[:,j])
+        com_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None])
+    
+    extremities_new = []
+    for j in range(extremities.shape[1]):
+        curve = interpolate.splrep(timestamp_ori, extremities[:,j])
+        extremities_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None])
+
+    # for j in range(xquat.shape[1]):
+    #     rotations = xquat[:,j,:]
+    #     rotations = R.from_quat(rotations[:,[1,2,3,0]])
+    #     slerp = Slerp(timestamp_ori, rotations)
+    #     # timestamp_new[0] = 1.0
+    #     interp_rots = slerp(timestamp_new).as_quat()
+    #     interp_rots[:,[0,1,2,3]] = interp_rots[:,[3,0,1,2]]
+    #     xquat[:,j,:] = interp_rots
 
     interpolated_data = {
         "xquat": xquat.reshape(xquat.shape[0],-1),
-        "extremities": extremities,
-        "com": com_dist,
-        "qpos": qpos,
-        "qvel": qvel
+        "extremities": np.concatenate(extremities_new, axis=1),
+        "com": np.concatenate(com_new, axis=1),
+        "qpos": np.concatenate(qpos_new, axis = 1),
+        "qvel": np.concatenate(qvel_new, axis=1),
+        "com_ori": np.concatenate(com_ori_new, axis=1)
     }
 
     # np.savez('./data/trajectory3d_interpolated.npz', **interpolated_data)

@@ -61,7 +61,7 @@ class HumanoidStandupEnv():
         self.obs = self.env._task.get_observation(self.physics)
         return self._state, self._reward, self._done, None
 
-    def reset(self, test_time=False, store_buf=False):
+    def reset(self, test_time=False, store_buf=False, speed=None):
         self._step_num = 0
         self._initial_steps = True
         if not test_time: self.sample_power()
@@ -187,120 +187,219 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
     qpos_to_ctrl_index = np.array([1, 0, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 12, 14, 13, 15, 16, 17, 18, 19, 20])
 
     def __init__(self, args, seed):
+        self.args = args
+        self.teacher_policy = None
         if args.teacher_student:
-            self.teacher_env = HumanoidStandupHybridEnv(args, args.seed)
+            self.teacher_env = HumanoidStandupEnv(args, seed)
+            self.render_env = suite.load(domain_name="humanoid", task_name="stand", task_kwargs={'random': seed})
+            self.teacher_policy = None
         super().__init__(args, seed)
+        self.physics.reload_from_xml_path('data/humanoid_high_freq.xml')
+
+    def set_teacher_policy(self, policy):
+        self.teacher_policy = policy
 
     def run_one_episode(self):
-        video = []
         self.teacher_env.power = self.args.teacher_power
-        state, done = self.teacher_env.reset(test_time=True), False
-        self.teacher_env.xquat = []
-        self.teacher_env.extremities = []
-        self.teacher_env.com = []
-        self.teacher_env.com_vel = []
-        self.teacher_env.qpos = []
-        self.teacher_env.qvel = []
-        episode_reward = 0
-        while not done:
-            action = self.teacher_policy.select_action(state["scalar"], terrain=state["terrain"])
-            state, reward, done, _ = self.teacher_env.step(action, test_time=True)
-            episode_reward += reward
-        trajectory = {
-            "xquat": np.array(self.teacher_env.xquat),
-            "extremities": np.array(self.teacher_env.extremities),
-            "com": np.array(self.teacher_env.com),
-            "com_vel": np.array(self.teacher_env.com_vel),
-            "qpos": np.array(self.teacher_env.qpos),
-            "qvel": np.array(self.teacher_env.qvel)
+        while True:
+            self.reset_teacher_trajectory()
+            end_next_step = False
+            state, done = self.teacher_env.reset(test_time=True), False
+            self.teacher_initial_state["qpos"] = self.teacher_env.physics.data.qpos.copy()
+            self.teacher_initial_state["qvel"] = self.teacher_env.physics.data.qvel.copy()
+            self.teacher_episode_length = 0
+
+            
+            while not done:
+                action = self.teacher_policy.select_action(state)
+                state, _, done, _ = self.teacher_env.step(action, test_time=True)
+                self.teacher_episode_length += 1
+
+                self.teacher_traj["xquat"].append(self.teacher_env.physics.data.xquat.copy())
+                self.teacher_traj["extremities"].append(self.teacher_env.physics.extremities().copy())
+                self.teacher_traj["com"].append(self.teacher_env.physics.center_of_mass_position().copy())
+                self.teacher_traj["com_vel"].append(self.teacher_env.physics.center_of_mass_velocity().copy())
+                self.teacher_traj["com_ori"].append(self.teacher_env.physics.torso_vertical_orientation().copy())
+                self.teacher_traj["qpos"].append(self.teacher_env.physics.data.qpos.copy())
+                self.teacher_traj["qvel"].append(self.teacher_env.physics.data.qvel.copy())
+
+                self.teacher_images.append(self.teacher_env.render())
+
+                if end_next_step: break
+                
+                if self.teacher_env.physics.head_height() > 1.45:
+                    end_next_step = True
+            
+            if end_next_step: break
+
+        for (key, val) in self.teacher_traj.items():
+            self.teacher_traj[key] = np.array(val)
+
+    def reset_teacher_trajectory(self):
+        self.teacher_traj = {
+            "xquat": [],
+            "extremities": [],
+            "com": [],
+            "com_vel": [],
+            "qpos": [],
+            "qvel": [],
+            "com_ori": [],
         }
-        return trajectory, self.teacher_env.images, self.teacher_env.initial_state
+        self.teacher_images = []
+        self.teacher_initial_state = {}
+    
 
-    def reset(self, test_time=False, initial_reset=False):
+    def reset(self, test_time=False, store_buf=False, speed=None):
         self._step_num = 0
-        self.reset_count += 1
-        if not test_time: self.sample_power()
-        if test_time:
-            self.images = []
-            self.xquat = []
-            self.extremities = []
-            self.com = []
-            self.com_vel = []
-            self.qpos = []
-            self.qvel = []
-        self.speed = np.random.randint(0, 7) * 0.1 + 0.2
-        # self.speed = 0.8
-        # if self.trajectoty_data != None:
-        #     self.interpolated_trajectory = utils.interpolate_motion(self.trajectoty_data, self.speed)
-
-        repeat = True
-        if self.custom_reset:
-            repeat = True
-            while repeat:
-                self.env.reset()
-
-                self.physics.data.qpos[:] = self.default_qpos
-                self.physics.data.qpos[:3] = [0, 0, 0.5]
-                self.physics.data.qpos[3:7] = [0.7071, 0, 0.7071, 0]
-                self.physics.after_reset()
-                repeat = False
-                # if self.physics.data.ncon == 0: repeat = False
+        self.power = 1.0
+        
+        if not test_time or (speed == None):
+            self.speed = np.random.uniform(low=self.args.slow_speed, high=self.args.fast_speed)
         else:
-            if not self.args.teacher_student or self.teacher_policy == None or initial_reset:
-                self.timestep = self.env.reset()
-                self.interpolated_trajectory = self.trajectoty_data
+            self.speed = speed
 
-            else:
-                while True:
-                    trajectory, self.teacher_images, initial_state = self.run_one_episode()
-                    self.physics.data.qpos[:] = initial_state["qpos"]
-                    self.physics.data.qvel[:] = initial_state["qvel"]
+
+        self.env.reset()
+
+
+        if self.teacher_policy == None:
+            self.teacher_episode_length = 1
+            self.interpolated_trajectory = {}
+            self.interpolated_trajectory["qpos"] = self.teacher_env.physics.data.qpos.copy()[None,:]
+            self.interpolated_trajectory["com"] = self.teacher_env.physics.center_of_mass_position()[None,:]
+            self.interpolated_trajectory["com_ori"] = self.teacher_env.physics.torso_vertical_orientation()[None,:]
+        else:
+            while True:
+                self.run_one_episode()
+                self.teacher_episode_length = math.ceil(self.teacher_episode_length/self.speed)
+                self.interpolated_trajectory = utils.interpolate_motion(self.teacher_traj, self.speed)
+                if not test_time: self._step_num = np.random.randint(0, self.teacher_episode_length)
+                with self.physics.reset_context():
+                    self.physics.data.qpos[:] = self.interpolated_trajectory["qpos"][self._step_num]
+                    self.physics.data.qvel[:] = self.interpolated_trajectory["qvel"][self._step_num]
                     self.physics.after_reset()
-                    self.interpolated_trajectory = utils.interpolate_motion(trajectory, self.speed)
-
-                    action = np.zeros(self.action_space.shape)
-                    self.env.step(action)
-                    # while self.env.physics.center_of_mass_position()[2] > 0.25:
-                    while self.env.physics.center_of_mass_velocity()[2] < 0:
-                        self.env.step(action)
-                        if test_time == True and self.teacher_policy != None: self.images.append(self.render())
-
-                    self._step_num = 0
-                    if np.abs(self.env.physics.center_of_mass_position()[2] - self.interpolated_trajectory["com"][0][
-                        2]) < 0.1: break
+                
+                if np.abs(self.env.physics.center_of_mass_position()[2] - self.interpolated_trajectory["com"][self._step_num][2]) < 0.1:
+                    break
 
         self.obs = self.env._task.get_observation(self.env._physics)
         self.terminal_signal = False
 
-        if not test_time: self.sample_power()
         return self._state
 
     def step(self, a, test_time=False):
-        self._step_num += 1
-        if self.original: a = a * self.power
         self.timestep = self.substep(a)
         self.obs = self.env._task.get_observation(self.physics)
-        # mujoco.engine.mjlib.mj_rnePostConstraint(self.physics.model.ptr, self.physics.data.ptr)
-        # print(self._reaction_force, self.physics.data.ncon)
-        reaction_force = self._reaction_force if self.args.predict_force else None
-        if test_time: self.images.append(self.render())
-        if test_time and (self.args.imitation_reward or self.args.teacher_student):
-            self.xquat.append(self.physics.data.xquat[1:].flatten())
-            self.extremities.append(self.physics.extremities())
-            self.com.append(self.physics.center_of_mass_position())
-            self.com_vel.append(self.physics.center_of_mass_velocity())
-            self.qpos.append(self.physics.data.qpos.copy())
-            self.qvel.append(self.physics.data.qvel.copy())
-        return self._state, self._reward, self._done, reaction_force
+        self._step_num += 1
+        return self._state, self._reward, self._done, None
 
     def substep(self, action):
-        for _ in range(self.env._n_sub_steps):
+        for _ in range(self.env._n_sub_steps*2):
             pose_diff = \
-            ((self.interpolated_trajectory["qpos"][self._step_num - 1][7:] + action) - self.physics.data.qpos[7:])[
+            ((self.interpolated_trajectory["qpos"][self._step_num][7:] + action) - self.physics.data.qpos[7:])[
                 self.qpos_to_ctrl_index]
-            kp = np.ones_like(self.physics.model.actuator_gear[:, 0]) * 100
-            kp[7] = kp[8] = kp[13] = kp[14] = 30
-            kp = kp / self.physics.model.actuator_gear[:, 0]
+            kp = np.ones_like(self.physics.model.actuator_gear[:, 0])
+            kd = kp / 10
+            final_action = kp * pose_diff - ((kd * self.physics.data.qvel[6:])[self.qpos_to_ctrl_index])
+            self.env._task.before_step(final_action, self.env._physics)
+            self.env._physics.step()
+        self.env._task.after_step(self.env._physics)
+
+    def get_target_pose(self, index):
+        joint_angles = self.interpolated_trajectory["qpos"][index][7:]
+        com_height = self.interpolated_trajectory["com"][index][2]
+        com_orientation = self.interpolated_trajectory["com_ori"][index]
+        return np.concatenate((joint_angles, [com_height], com_orientation))
+
+    @property
+    def _done(self):
+        if np.abs(self.env.physics.center_of_mass_position()[2] - self.interpolated_trajectory["com"][self._step_num - 1][2]) > 0.5:
+            self.terminal_signal = True
+            return True
+        if self._step_num < self.teacher_episode_length:
+            return False
+        return True
+
+    @property
+    def _state(self):
+        _state = []
+        for part in self.obs.values():
+            _state.append(part if not np.isscalar(part) else [part])
+        _state.append(self.get_target_pose(min(self._step_num + 5, self.teacher_episode_length - 1)))
+        _state.append(self.get_target_pose(min(self._step_num + 10, self.teacher_episode_length - 1)))
+        _state.append([self.power])
+        return np.concatenate(_state)
+
+    @property
+    def _reward(self):
+        index = self._step_num - 1
+
+        rotation_dist = ((self.interpolated_trajectory["qpos"][index][7:] - self.physics.data.qpos[7:]) ** 2).sum() * 2
+        # rotation_dist = rewards.tolerance((self.interpolated_trajectory["qpos"][index][7:] - self.physics.data.qpos[7:]),
+        #                                 bounds=(-0.05, 0.05),
+        #                                 margin=1.57).mean()
+        velocity_dist = ((self.interpolated_trajectory["qvel"][index][6:] - self.physics.data.qvel[6:]) ** 2).sum() * 0.1
+        com_dist = ((self.interpolated_trajectory["com"][index][2] - self.physics.center_of_mass_position()[2]) ** 2) * 40
+        # com_dist = rewards.tolerance((self.interpolated_trajectory["com"][index][2] - self.physics.center_of_mass_position()[2]),
+        #                             bounds=(0.0, 0.0),
+        #                             margin=0.2)
+        ori_dist = ((self.interpolated_trajectory["com_ori"][index] - self.physics.torso_vertical_orientation()) ** 2).sum() * 10
+        # ori_dist = rewards.tolerance((self.interpolated_trajectory["com_ori"][index] - self.physics.torso_vertical_orientation()),
+        #                             bounds=(-0.03, 0.03),
+        #                             margin=0.6,
+        #                             value_at_margin=0.3).mean()
+        # extremities_dist = ((self.interpolated_trajectory["extremities"][index] - self.physics.extremities()) ** 2).sum() * 40 / 16
+        # acc_penalty = (self.physics.data.qacc[6:] ** 2).mean() / 2000
+        # print("rotation: {:.5f}".format(rotation_dist))
+        # print("extremities: {:.5f}".format(np.exp(-extremities_dist)))
+        # print("com: {:.5f}".format(com_dist))
+        # print("ori: {:.5f}".format(ori_dist))
+        return 0.1 * np.exp(-rotation_dist) + 0.4 * np.exp(-com_dist) + 0.15 * np.exp(-ori_dist) + 0.35 * np.exp(-velocity_dist)
+        # return 0.0 * np.exp(-rotation_dist) + 0.6 * np.exp(-com_dist) + 0.2 * np.exp(-ori_dist) + 0.0 * np.exp(-extremities_dist) + 0.2 * np.exp(-velocity_dist)
+
+    def render(self, mode=None):
+        image_l = self.physics.render(height=384, width=384, camera_id=1)
+
+        with self.render_env.physics.reset_context():
+            self.render_env.physics.data.qpos[:] = self.interpolated_trajectory["qpos"][self._step_num-1]
+            self.render_env.physics.data.qvel[:] = self.interpolated_trajectory["qvel"][self._step_num-1]
+            self.render_env.physics.after_reset()
+        image_m = self.render_env.physics.render(height=384, width=384, camera_id=1)
+
+        image_r = self.teacher_images[min(self._step_num-1, len(self.teacher_images)-1)]
+        return np.concatenate((image_l, image_m, image_r), axis=1)
+
+
+class HumanoidStandupVelocityDistillEnv(HumanoidStandupVelocityEnv):
+    def __init__(self, args, seed):
+        super().__init__(args, seed)
+        self.obs_shape = super()._state.shape
+
+    def reset(self, test_time=False, store_buf=False, speed=None):
+        self.state_history = []
+        super().reset(test_time=test_time, store_buf=store_buf, speed=speed)
+        return self._state
+
+    def step(self, a, test_time=False, supply_target=True):
+        extra = {
+            "speed": self.speed,
+            "pd_base": self.interpolated_trajectory["qpos"][self._step_num][7:],
+            "current_pose": self.physics.data.qpos[7:]
+        }
+        self.timestep = self.substep(a, supply_target=supply_target)
+        self.obs = self.env._task.get_observation(self.physics)
+        self.state_history.append(self._single_state)
+        self._step_num += 1
+        return self._state, self._reward, self._done, extra
+
+    def substep(self, action, supply_target):
+        if supply_target:
+            pd_target = action + self.physics.data.qpos[7:]
+        else:
+            pd_target = action + self.interpolated_trajectory["qpos"][self._step_num][7:]
+        for _ in range(self.env._n_sub_steps*2):
+            pose_diff = (pd_target - self.physics.data.qpos[7:])[self.qpos_to_ctrl_index]
+            kp = np.ones_like(self.physics.model.actuator_gear[:, 0])
             kd = kp / 10
             final_action = kp * pose_diff - ((kd * self.physics.data.qvel[6:])[self.qpos_to_ctrl_index])
             self.env._task.before_step(final_action, self.env._physics)
@@ -308,70 +407,28 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
         self.env._task.after_step(self.env._physics)
 
     @property
-    def _done(self):
-        if np.abs(
-                self.env.physics.center_of_mass_position()[2] - self.interpolated_trajectory["com"][self._step_num - 1][
-                    2]) > 0.2:
-            self.terminal_signal = True
-            return True
-        if self._step_num >= 375:
-            return True
-        return False
-
-    @property
     def _state(self):
         _state = []
         for part in self.obs.values():
             _state.append(part if not np.isscalar(part) else [part])
-        if self.args.imitation_reward:
-            _state.append(self.interpolated_trajectory["qpos"][self._step_num + 10])
-            _state.append(self.interpolated_trajectory["qpos"][self._step_num + 20])
-            # _state.append([self.speed])
+        # if len(self.state_history) == 0:
+        #     self.state_history.append(np.concatenate(_state))
+        # _state.append(self.state_history[max(0, self._step_num - 2)])
+        # _state.append(self.state_history[max(0, self._step_num - 4)])
+        _state.append([self.speed])
         _state.append([self.power])
-        return {
-            "scalar": np.concatenate(_state),
-            "terrain": None,
-        }
+        return np.concatenate(_state)
 
     @property
-    def _reward(self):
-        if self.args.imitation_reward:
-            return self.compute_imitaion_reward(
-                self.physics.data.xquat[1:].flatten(),
-                self.physics.extremities(),
-                self.physics.center_of_mass_position(),
-                self._step_num - 1)
-
-    def render(self, mode=None):
-        image_l = super().render()
-        image_r = self.teacher_images.pop(0)
-        return np.concatenate((image_l, image_r), axis=1)
-
-    # def compute_imitaion_reward(self, xquat, extremities, com, index):
-
-    #     epsilon = 1e-7
-    #     product = xquat.reshape(-1, 4) * self.interpolated_trajectory["xquat"][index].reshape(-1, 4)
-    #     angle_diff = 2 * (np.arccos(np.clip(np.abs(product.sum(axis=-1)), -1+epsilon, 1-epsilon)) ** 2)
-    #     root_orientation = angle_diff[0]
-    #     xquat_dist = angle_diff[1:].sum()
-    #     # xquat_dist = np.sum((xquat - self.trajectoty_data["xquat"][index]) ** 2)
-    #     extremities_dist = np.sum((extremities - self.interpolated_trajectory["extremities"][index]) ** 2) * 40
-    #     com_dist = np.sum((com[2] - self.interpolated_trajectory["com"][index][2]) ** 2) * 10
-    #     distance = 0.1 * xquat_dist + 1.0 * extremities_dist + 1.0 * com_dist
-    #     # return 0.2 * np.exp(-xquat_dist) + 0.3 * np.exp(-extremities_dist) + 0.5 * np.exp(-com_dist)
-    #     return 0.2 * np.exp(-com_dist) + 0.1 * np.exp(-root_orientation) + 0.15 * np.exp(-extremities_dist) + 0.55 * np.exp(-xquat_dist)
-
-    def compute_imitaion_reward(self, xquat, extremities, com, index):
-
-        epsilon = 1e-7
-        product = xquat.reshape(-1, 4) * self.interpolated_trajectory["xquat"][index].reshape(-1, 4)
-        xquat_dist = 2 * np.arccos(np.clip(np.abs(product.sum(axis=-1)), -1 + epsilon, 1 - epsilon))
-        # xquat_dist = np.sum((xquat - self.trajectoty_data["xquat"][index]) ** 2)
-        extremities_dist = np.sum((extremities - self.interpolated_trajectory["extremities"][index]) ** 2)
-        com_dist = np.sum((com - self.interpolated_trajectory["com"][index]) ** 2)
-        distance = 0.1 * xquat_dist + 1.0 * extremities_dist + 1.0 * com_dist
-        return np.exp(-np.sum(distance / 4))
-
+    def _single_state(self):
+        _state = []
+        for part in self.obs.values():
+            _state.append(part if not np.isscalar(part) else [part])
+        return np.concatenate(_state)
+    
+    @property
+    def teacher_state(self):
+        return super()._state
 
 class HumanoidStandupHybridEnv(HumanoidStandupEnv):
     qpos_to_ctrl_index = np.array([1, 0, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 12, 14, 13, 15, 16, 17, 18, 19, 20])

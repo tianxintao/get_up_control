@@ -338,9 +338,6 @@ class SAC(nn.Module):
         torch.save(self.log_alpha, filename + "_log_alpha.pt")
         torch.save(self.log_alpha_optimizer.state_dict(), filename + "_log_alpha_optimizer.pt")
 
-        if self.args.predict_force:
-            torch.save(self.force_network.state_dict(), filename + "_force.pt")
-            torch.save(self.force_optimizer.state_dict(), filename + "_force_optimizer.pt")
 
     def load(self, filename, load_optimizer=False):
         self.critic.load_state_dict(torch.load(filename + "_critic.pt"))
