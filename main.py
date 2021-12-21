@@ -8,14 +8,9 @@ import json
 import sys
 import copy
 import torch
-import copy
-import math
-from tensorboardX import SummaryWriter
 from PPO import PPO
 from SAC import SAC
-from TQC import TQC
-from torch.utils.tensorboard import SummaryWriter
-from env import HumanoidStandupEnv, HumanoidStandingEnv, HumanoidStandupVelocityEnv, HumanoidStandupHybridEnv
+from env import HumanoidStandupEnv, HumanoidStandingEnv, HumanoidStandupVelocityEnv, HumanoidStandupHybridEnv, HumanoidElbowStandupEnv
 from utils import RLLogger, ReplayBuffer, quaternion_multiply
 import argparse
 
@@ -27,15 +22,15 @@ class ArgParserTrain(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument('--env', type=str, default='HumanoidStandup',
-                          choices=['Cheetah', 'HumanoidStandup', 'HumanoidRandom', 'HumanoidHybrid', 'HumanoidBench',
-                                   'HumanoidChair', 'HumanoidStanding', 'HumanoidStandupVelocityEnv',
-                                   'MountainCarContinuous-v0'])
+                          choices=['HumanoidStandup', 'HumanoidStanding', 'HumanoidElbowStandup', 'HumanoidElbowStanding'])
         self.add_argument("--policy", default="SAC", choices=['SAC', 'PPO', 'TQC'])
         self.add_argument('--debug', default=False, action='store_true')
         self.add_argument('--scheduler', default=False, action='store_true')
         self.add_argument('--imitation_reward', default=False, action='store_true')
         self.add_argument('--test_policy', default=False, action='store_true')
         self.add_argument('--teacher_student', default=False, action='store_true')
+        self.add_argument('--standing_policy', default=None, type=str)
+        self.add_argument('--hybrid', default=False, action='store_true')
         self.add_argument("--teacher_power", default=0.4, type=float)
         self.add_argument("--teacher_dir", default=None, type=str)
         self.add_argument("--seed", default=0, type=int)
@@ -54,9 +49,6 @@ class ArgParserTrain(argparse.ArgumentParser):
         self.add_argument("--imitation_data", default='./data/imitation_data_sample.npz', type=str)
         self.add_argument("--work_dir", default='./experiment/')
         self.add_argument("--load_dir", default=None, type=str)
-        self.add_argument("--standing_policy", default=None, type=str)
-        self.add_argument("--standup_policy", default=None, type=str)
-
         # SAC hyperparameters
         self.add_argument("--batch_size", default=1024, type=int)
         self.add_argument("--discount", default=0.99, type=float)
@@ -89,11 +81,8 @@ class Trainer():
         torch.manual_seed(args.seed)
         np.random.seed(args.seed)
 
-        obs_dim = self.env.obs_shape[0]
-        if args.env == "HumanoidHybrid":
-            self.act_dim = 1
-        else:
-            self.act_dim = self.env.action_space.shape[0]
+        obs_dim = self.env.obs_shape
+        self.act_dim = self.env.action_space
 
         self.buf = ReplayBuffer(obs_dim, self.act_dim, args, max_size=int(args.replay_buffer_size))
         self.env.buf = self.buf
@@ -127,7 +116,13 @@ class Trainer():
                 param.requires_grad = False
             self.env.set_teacher_policy(self.teacher_policy)
 
-
+            if self.args.hybrid:
+                self.standing_policy = copy.deepcopy(self.teacher_policy)
+                self.standing_policy.load(os.path.join(args.standing_policy + '/model', 'best_model'), load_optimizer=False)
+                for param in self.standing_policy.parameters():
+                    param.requires_grad = False
+        
+        
     def setup(self, args):
         ts = time.gmtime()
         ts = time.strftime("%m-%d-%H-%M", ts)
@@ -147,10 +142,12 @@ class Trainer():
     def env_function(self):
         if self.args.env == 'HumanoidStandup':
             if self.args.teacher_student:
+                if self.args.hybrid:
+                    return HumanoidStandupHybridEnv
                 return HumanoidStandupVelocityEnv
             return HumanoidStandupEnv
-        elif self.args.env == "HumanoidHybrid":
-            return HumanoidStandupHybridEnv
+        elif self.args.env == "HumanoidElbowStandup":
+            return HumanoidElbowStandupEnv
         elif self.args.env == "HumanoidStanding":
             return HumanoidStandingEnv
 
@@ -160,7 +157,7 @@ class Trainer():
 
     def train_sac(self):
         store_buf = False if self.args.teacher_student else True
-        state, done = self.env.reset(store_buf=store_buf), False
+        state, done = self.env.reset(store_buf=store_buf, test_time=True), False
         t = 0
         self.last_power_update = -np.inf
         self.last_duration = np.inf
@@ -174,7 +171,10 @@ class Trainer():
 
             # Select action randomly or according to policy
             if self.args.test_policy:
-                action = self.policy.select_action(state)
+                if self.args.hybrid and (not self.env.standup_controller):
+                    action = self.standing_policy.select_action(state)
+                else:
+                    action = self.policy.select_action(state)
             elif (t < self.args.start_timesteps):
                 action = np.clip(2 * np.random.random_sample(size=self.act_dim) - 1, -self.env.power, self.env.power)
             else:
@@ -182,24 +182,33 @@ class Trainer():
 
             next_state, reward, done, _ = self.env.step(a=action)
 
-            # if self.args.test_policy:
-            #     image_l = self.env.render()
-            #     cv2.imshow('image', image_l)
-            #     cv2.waitKey(2)
+            if self.args.test_policy or True:
+                image_l = self.env.render()
+                # print(self.env.physics.named.data.qpos)
+                # print(self.env.physics.named.data.qvel)
+                cv2.imshow('image', image_l)
+                cv2.waitKey(4)
+                	
 
             episode_timesteps += 1
-            self.buf.add(state, action, next_state, reward, self.env.terminal_signal)
+            if not self.args.hybrid:
+                self.buf.add(state, action, next_state, reward, self.env.terminal_signal)
             state = next_state
             episode_reward += reward
 
             # Train agent after collecting sufficient data
-            if (t >= self.args.start_timesteps):
+            if (t >= self.args.start_timesteps) and not self.args.test_policy:
                 self.policy.train(self.buf, self.args.batch_size)
 
             if done:
+                # if self.env.physics.head_height() > 1.2:
+                #     qpos.append(self.env.physics.data.qpos.copy())
+                #     qvel.append(self.env.physics.data.qvel.copy())
+                # if len(qpos) >= 250:
+                #     print("collection done")
                 self.logger.log_train_episode(t, episode_num, episode_timesteps, episode_reward, self.policy.loss_dict, self.env, self.args)
                 self.policy.reset_record()
-                state, done = self.env.reset(store_buf=store_buf), False
+                state, done = self.env.reset(store_buf=store_buf, test_time=True), False
                 episode_reward = 0
                 episode_timesteps = 0
                 episode_num += 1
@@ -257,7 +266,10 @@ class Trainer():
             episode_timesteps = 0
             episode_reward = 0
             while not done:
-                action = test_policy.select_action(state)
+                if self.args.hybrid and (not test_env.standup_controller):
+                    action = self.standing_policy.select_action(state)
+                else:
+                    action = test_policy.select_action(state)
                 state, reward, done, _ = test_env.step(action, test_time=True)
                 episode_reward += reward
                 episode_timesteps += 1
