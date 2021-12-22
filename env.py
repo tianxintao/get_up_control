@@ -283,16 +283,16 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
     def _reward(self):
         index = self._step_num - 1
 
-        rotation_dist = np.exp(-((self.interpolated_trajectory["qpos"][index][7:] - self.physics.data.qpos[7:]) ** 2).sum() * 0.15)
+        rotation_dist = ((self.interpolated_trajectory["qpos"][index][7:] - self.physics.data.qpos[7:]) ** 2).sum() * 2
         # rotation_dist = rewards.tolerance((self.interpolated_trajectory["qpos"][index][7:] - self.physics.data.qpos[7:]),
         #                                 bounds=(-0.05, 0.05),
         #                                 margin=1.57).mean()
-        velocity_dist = np.exp(-((self.interpolated_trajectory["qvel"][index][6:] - self.physics.data.qvel[6:]) ** 2).sum() * 0.0003)
-        com_dist = np.exp(-((self.interpolated_trajectory["com"][index][2] - self.physics.center_of_mass_position()[2]) ** 2) * 40)
+        velocity_dist = ((self.interpolated_trajectory["qvel"][index][6:] - self.physics.data.qvel[6:]) ** 2).sum() * 0.1
+        com_dist = ((self.interpolated_trajectory["com"][index][2] - self.physics.center_of_mass_position()[2]) ** 2) * 40
         # com_dist = rewards.tolerance((self.interpolated_trajectory["com"][index][2] - self.physics.center_of_mass_position()[2]),
         #                             bounds=(0.0, 0.0),
         #                             margin=0.2)
-        ori_dist = np.exp(-((self.interpolated_trajectory["com_ori"][index] - self.physics.torso_vertical_orientation()) ** 2).sum() * 0.5)
+        ori_dist = ((self.interpolated_trajectory["com_ori"][index] - self.physics.torso_vertical_orientation()) ** 2).sum() * 10
         # ori_dist = rewards.tolerance((self.interpolated_trajectory["com_ori"][index] - self.physics.torso_vertical_orientation()),
         #                             bounds=(-0.03, 0.03),
         #                             margin=0.6,
@@ -303,8 +303,7 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
         # print("extremities: {:.5f}".format(np.exp(-extremities_dist)))
         # print("com: {:.5f}".format(com_dist))
         # print("ori: {:.5f}".format(ori_dist))
-        # print("velocity: {:.5f}".format(velocity_dist))
-        return rotation_dist * com_dist * ori_dist * velocity_dist
+        return 0.1 * np.exp(-rotation_dist) + 0.4 * np.exp(-com_dist) + 0.3 * np.exp(-ori_dist) + 0.2 * np.exp(-velocity_dist)
         # return 0.0 * np.exp(-rotation_dist) + 0.6 * np.exp(-com_dist) + 0.2 * np.exp(-ori_dist) + 0.0 * np.exp(-extremities_dist) + 0.2 * np.exp(-velocity_dist)
 
     def render(self, mode=None):
@@ -447,11 +446,11 @@ class HumanoidStandupHybridEnv(HumanoidStandupVelocityEnv, HumanoidStandingEnv):
         return False
         
 
-class HumanoidElbowStandupEnv(HumanoidStandupEnv):
+class HumanoidDisabledStandupEnv(HumanoidStandupEnv):
 
     def __init__(self, args, seed):
         super().__init__(args, seed)
-        self.physics.reload_from_xml_path('data/humanoid_disabled_elbow.xml')
+        self.physics.reload_from_xml_path('data/humanoid_disabled.xml')
         self.obs_shape -= 4
         self.action_space -= 2
 

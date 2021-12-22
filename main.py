@@ -10,7 +10,7 @@ import copy
 import torch
 from PPO import PPO
 from SAC import SAC
-from env import HumanoidStandupEnv, HumanoidStandingEnv, HumanoidStandupVelocityEnv, HumanoidStandupHybridEnv, HumanoidElbowStandupEnv
+from env import HumanoidStandupEnv, HumanoidStandingEnv, HumanoidStandupVelocityEnv, HumanoidStandupHybridEnv, HumanoidDisabledStandupEnv
 from utils import RLLogger, ReplayBuffer, quaternion_multiply
 import argparse
 
@@ -22,7 +22,7 @@ class ArgParserTrain(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument('--env', type=str, default='HumanoidStandup',
-                          choices=['HumanoidStandup', 'HumanoidStanding', 'HumanoidElbowStandup', 'HumanoidElbowStanding'])
+                          choices=['HumanoidStandup', 'HumanoidStanding', 'HumanoidDisabledStandup', 'HumanoidElbowStanding'])
         self.add_argument("--policy", default="SAC", choices=['SAC', 'PPO', 'TQC'])
         self.add_argument('--debug', default=False, action='store_true')
         self.add_argument('--scheduler', default=False, action='store_true')
@@ -101,8 +101,8 @@ class Trainer():
             self.policy.load(os.path.join(args.load_dir + '/model', 'best_model'), load_optimizer=False)
 
         if args.teacher_student:
-            self.teacher_policy = SAC(self.env.teacher_env.obs_shape[0], 
-                     self.env.teacher_env.action_space.shape[0],
+            self.teacher_policy = SAC(self.env.teacher_env.obs_shape, 
+                     self.env.teacher_env.action_space,
                      init_temperature=args.init_temperature,
                      alpha_lr=args.alpha_lr,
                      actor_lr=args.actor_lr,
@@ -146,8 +146,8 @@ class Trainer():
                     return HumanoidStandupHybridEnv
                 return HumanoidStandupVelocityEnv
             return HumanoidStandupEnv
-        elif self.args.env == "HumanoidElbowStandup":
-            return HumanoidElbowStandupEnv
+        elif self.args.env == "HumanoidDisabledStandup":
+            return HumanoidDisabledStandupEnv
         elif self.args.env == "HumanoidStanding":
             return HumanoidStandingEnv
 
@@ -157,7 +157,7 @@ class Trainer():
 
     def train_sac(self):
         store_buf = False if self.args.teacher_student else True
-        state, done = self.env.reset(store_buf=store_buf, test_time=True), False
+        state, done = self.env.reset(store_buf=store_buf, test_time=False), False
         t = 0
         self.last_power_update = -np.inf
         self.last_duration = np.inf
@@ -182,7 +182,7 @@ class Trainer():
 
             next_state, reward, done, _ = self.env.step(a=action)
 
-            if self.args.test_policy or True:
+            if self.args.test_policy:
                 image_l = self.env.render()
                 # print(self.env.physics.named.data.qpos)
                 # print(self.env.physics.named.data.qvel)
@@ -208,7 +208,7 @@ class Trainer():
                 #     print("collection done")
                 self.logger.log_train_episode(t, episode_num, episode_timesteps, episode_reward, self.policy.loss_dict, self.env, self.args)
                 self.policy.reset_record()
-                state, done = self.env.reset(store_buf=store_buf, test_time=True), False
+                state, done = self.env.reset(store_buf=store_buf, test_time=False), False
                 episode_reward = 0
                 episode_timesteps = 0
                 episode_num += 1

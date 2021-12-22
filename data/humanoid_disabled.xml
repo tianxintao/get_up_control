@@ -86,7 +86,6 @@
             <site name="left_thigh" class="touch" pos="0 -.005 -.17" size=".061 .17" zaxis="0 1 34"/>
             <body name="left_shin" pos="0 -.01 -.403">
               <site name="left_knee" class="force-torque" pos="0 0 .02"/>
-              <joint name="left_knee" pos="0 0 .02" axis="0 -1 0" range="-160 2"/>
               <geom name="left_shin" fromto="0 0 0 0 0 -.3"  size=".049"/>
               <site name="left_shin" class="touch"  pos="0 0 -.15" size=".05 .15"/>
               <body name="left_foot" pos="0 0 -.39">
@@ -108,9 +107,9 @@
         <geom name="right_upper_arm" fromto="0 0 0 .16 -.16 -.16" size=".04 .16"/>
         <site name="right_upper_arm" class="touch" pos=".08 -.08 -.08" size=".041 .14" zaxis="1 -1 -1"/>
         <body name="right_lower_arm" pos=".18 -.18 -.18">
-          <geom name="right_lower_arm" fromto=".01 .01 .01 .17 .17 .17" size=".031"/>
+          <geom name="right_lower_arm" fromto=".01 -.01 -.01 .17 -.17 -.17" size=".031"/>
           <site name="right_lower_arm" class="touch" pos=".09 .09 .09" size=".032 .14" zaxis="1 1 1"/>
-          <body name="right_hand" pos=".18 .18 .18">
+          <body name="right_hand" pos=".18 -.18 -.18">
             <geom name="right_hand" type="sphere" size=".04"/>
             <site name="right_hand" class="touch" type="sphere" size=".041"/>
           </body>
@@ -122,6 +121,7 @@
         <geom name="left_upper_arm" fromto="0 0 0 .16 .16 -.16" size=".04 .16"/>
         <site name="left_upper_arm" class="touch" pos=".08 .08 -.08" size=".041 .14" zaxis="1 1 -1"/>
         <body name="left_lower_arm" pos=".18 .18 -.18">
+          <joint name="left_elbow" axis="0 -1 -1" range="-90 50" stiffness="0"/>
           <geom name="left_lower_arm" fromto=".01 -.01 .01 .17 -.17 .17" size=".031"/>
           <site name="left_lower_arm" class="touch" pos=".09 -.09 .09" size=".032 .14" zaxis="1 -1 1"/>
           <body name="left_hand" pos=".18 -.18 .18">
@@ -146,13 +146,13 @@
     <motor name="left_hip_x"      gear="40"  joint="left_hip_x"/>
     <motor name="left_hip_z"      gear="40"  joint="left_hip_z"/>
     <motor name="left_hip_y"      gear="120" joint="left_hip_y"/>
-    <motor name="left_knee"       gear="80"  joint="left_knee"/>
     <motor name="left_ankle_x"    gear="20"  joint="left_ankle_x"/>
     <motor name="left_ankle_y"    gear="20"  joint="left_ankle_y"/>
     <motor name="right_shoulder1" gear="20"  joint="right_shoulder1"/>
     <motor name="right_shoulder2" gear="20"  joint="right_shoulder2"/>
     <motor name="left_shoulder1"  gear="20"  joint="left_shoulder1"/>
     <motor name="left_shoulder2"  gear="20"  joint="left_shoulder2"/>
+    <motor name="left_elbow"      gear="40"  joint="left_elbow"/>
   </actuator>
 
   <sensor>
