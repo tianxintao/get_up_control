@@ -3,7 +3,6 @@ import numpy as np
 import os
 import math
 import logging
-# from dm_control.mujoco.wrapper import mjbindings
 from scipy import interpolate
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
@@ -68,47 +67,6 @@ class ReplayBuffer(object):
         self.not_done = data['not_done']
         self.ptr = data['ptr']
         self.size = data['size']
-
-
-# class DistillBuffer(ReplayBuffer):
-#     def __init__(self, state_dim, action_dim, args, max_size=int(1e6)):
-#         super().__init__(state_dim, action_dim, args, max_size)
-#         self.velocity = np.zeros((max_size, 1))
-
-#     def add(self, state, action, next_state, reward, done, velocity):
-#         super().add(state, action, next_state, reward, done)
-#         self.velocity[self.ptr] = velocity
-
-#     def sample(self, batch_size):
-#         ind = np.random.randint(0, self.size, size=batch_size)
-            
-#         return (
-#             torch.FloatTensor(self.state[ind]).to(self.device),
-#             torch.FloatTensor(self.action[ind]).to(self.device),
-#             torch.FloatTensor(self.next_state[ind]).to(self.device),
-#             torch.FloatTensor(self.reward[ind]).to(self.device),
-#             torch.FloatTensor(self.not_done[ind]).to(self.device),
-#             torch.FloatTensor(self.velocity[ind]).to(self.device)
-#         )
-    
-#     def save(self, filename):
-#         data = {
-#             'state': self.state,
-#             'action': self.action,
-#             'next_state': self.next_state,
-#             'reward': self.reward,
-#             'not_done': self.not_done,
-#             'ptr': self.ptr,
-#             'size': self.size,
-#             'velocity': self.velocity,
-#         }
-#         np.savez(filename,**data)
-
-#     def load(self, filename):
-#         super().load(filename)
-#         data = np.load(filename)
-#         self.velocity = data['velocity']
-
 
 def make_dir(dir_path):
     try:
@@ -180,10 +138,10 @@ class RLLogger(object):
 def randomize_limited_and_rotational_joints(physics, k=0.1):
     random = np.random
 
-    hinge = mjbindings.enums.mjtJoint.mjJNT_HINGE
-    slide = mjbindings.enums.mjtJoint.mjJNT_SLIDE
-    ball = mjbindings.enums.mjtJoint.mjJNT_BALL
-    free = mjbindings.enums.mjtJoint.mjJNT_FREE
+    hinge = 3
+    slide = 2
+    ball = 1
+    free = 0
 
     qpos = physics.named.data.qpos
 
@@ -205,18 +163,30 @@ def quaternion_multiply(quaternion1, quaternion2):
                      a1 * c2 - b1 * d2 + c1 * a2 + d1 * b2,
                      a1 * d2 + b1 * c2 - c1 * b2 + d1 * a2]
 
-def interpolate_motion(data, interpolation_coeff=0.25):
-    # data = np.load(trajectory_file)
-    xquat = data["xquat"].reshape(data["xquat"].shape[0],-1,4).copy()
-    extremities = data["extremities"].copy()
+def rotmatrix_to_quat(mat):
+    return R.from_matrix(mat).as_quat()
+
+def rotmatrix_to_angleaxis(mat):
+    ep = 1e-12
+    s = R.from_matrix(mat).as_rotvec()
+    degrees = np.linalg.norm(s)
+    return np.array([degrees * 180 / np.pi, s[0]/(degrees+ep), s[1]/(degrees+ep), s[2]/(degrees+ep)])
+
+def interpolate_motion(data, interpolation_coeff=0.25, uneven=False):
     com_dist = data["com"].copy()
     qpos = data["qpos"].copy()
     qvel = data["qvel"].copy()
     com_ori = data["com_ori"].copy()
-    l = xquat.shape[0]
+    l = com_dist.shape[0]
 
     timestamp_ori = np.linspace(0, l, num=l, endpoint=True)
-    timestamp_new = np.linspace(0, l, num=math.ceil(l/interpolation_coeff), endpoint=True)
+    if uneven:
+        cut_off = l - 12
+        timestamp_part1 = np.linspace(0, cut_off, num=math.ceil(cut_off/0.05), endpoint=False)
+        timestamp_part2 = np.linspace(cut_off, l, num=math.ceil((l-cut_off)/interpolation_coeff), endpoint=True)
+        timestamp_new = np.concatenate((timestamp_part1, timestamp_part2))
+    else:
+        timestamp_new = np.linspace(0, l, num=math.ceil(l/interpolation_coeff), endpoint=True)
 
     com_ori_new = []
     for j in range(com_ori.shape[1]):
@@ -237,31 +207,14 @@ def interpolate_motion(data, interpolation_coeff=0.25):
     for j in range(com_dist.shape[1]):
         curve = interpolate.splrep(timestamp_ori, com_dist[:,j])
         com_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None])
-    
-    extremities_new = []
-    for j in range(extremities.shape[1]):
-        curve = interpolate.splrep(timestamp_ori, extremities[:,j])
-        extremities_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None])
-
-    # for j in range(xquat.shape[1]):
-    #     rotations = xquat[:,j,:]
-    #     rotations = R.from_quat(rotations[:,[1,2,3,0]])
-    #     slerp = Slerp(timestamp_ori, rotations)
-    #     # timestamp_new[0] = 1.0
-    #     interp_rots = slerp(timestamp_new).as_quat()
-    #     interp_rots[:,[0,1,2,3]] = interp_rots[:,[3,0,1,2]]
-    #     xquat[:,j,:] = interp_rots
 
     interpolated_data = {
-        "xquat": xquat.reshape(xquat.shape[0],-1),
-        "extremities": np.concatenate(extremities_new, axis=1),
         "com": np.concatenate(com_new, axis=1),
         "qpos": np.concatenate(qpos_new, axis = 1),
         "qvel": np.concatenate(qvel_new, axis=1),
         "com_ori": np.concatenate(com_ori_new, axis=1)
     }
 
-    # np.savez('./data/trajectory3d_interpolated.npz', **interpolated_data)
     return interpolated_data
 
 

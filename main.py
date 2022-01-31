@@ -10,7 +10,7 @@ import copy
 import torch
 from PPO import PPO
 from SAC import SAC
-from env import HumanoidStandupEnv, HumanoidStandingEnv, HumanoidStandupVelocityEnv, HumanoidStandupHybridEnv, HumanoidDisabledStandupEnv
+from env import HumanoidStandupEnv, HumanoidStandupVelocityEnv, HumanoidDisabledStandupEnv, HumanoidDisabledStandupVelocityEnv
 from utils import RLLogger, ReplayBuffer, quaternion_multiply
 import argparse
 
@@ -23,13 +23,9 @@ class ArgParserTrain(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
         self.add_argument('--env', type=str, default='HumanoidStandup',
                           choices=['HumanoidStandup', 'HumanoidStanding', 'HumanoidDisabledStandup', 'HumanoidElbowStanding'])
-        self.add_argument("--policy", default="SAC", choices=['SAC', 'PPO', 'TQC'])
-        self.add_argument('--debug', default=False, action='store_true')
-        self.add_argument('--scheduler', default=False, action='store_true')
-        self.add_argument('--imitation_reward', default=False, action='store_true')
         self.add_argument('--test_policy', default=False, action='store_true')
         self.add_argument('--teacher_student', default=False, action='store_true')
-        self.add_argument('--standing_policy', default=None, type=str)
+        self.add_argument('--to_file', default=False, action='store_true')
         self.add_argument('--hybrid', default=False, action='store_true')
         self.add_argument("--teacher_power", default=0.4, type=float)
         self.add_argument("--teacher_dir", default=None, type=str)
@@ -38,13 +34,13 @@ class ArgParserTrain(argparse.ArgumentParser):
         self.add_argument("--power_end", default=0.4, type=float)
         self.add_argument("--slow_speed", default=0.2, type=float)
         self.add_argument("--fast_speed", default=0.8, type=float)
+        self.add_argument("--threshold", default=60, type=float)
         self.add_argument('--max_timesteps', type=int, default=10000000, help='Number of simulation steps to run')
         self.add_argument('--test_interval', type=int, default=20000, help='Number of simulation steps between tests')
         self.add_argument('--test_iterations', type=int, default=10, help='Number of simulation steps between tests')
         self.add_argument('--replay_buffer_size', type=int, default=1e6, help='Number of simulation steps to run')
         self.add_argument('--gamma', type=float, default=0.999, help='discount factor')
         self.add_argument('--max_ep_len', type=int, default=1000)
-        self.add_argument('--custom_reset', default=False, action='store_true')
         self.add_argument('--avg_reward', default=False, action='store_true')
         self.add_argument("--imitation_data", default='./data/imitation_data_sample.npz', type=str)
         self.add_argument("--work_dir", default='./experiment/')
@@ -59,9 +55,6 @@ class ArgParserTrain(argparse.ArgumentParser):
         self.add_argument("--critic_lr", default=1e-4, type=float)
         self.add_argument("--tau", default=0.005)
         self.add_argument("--start_timesteps", default=10000, type=int)
-        self.add_argument('--mixture_actor', default=False, action='store_true')
-
-        self.add_argument('--render_interval', type=int, default=100, help='render every N')
         self.add_argument('--log_interval', type=int, default=100, help='log every N')
         self.add_argument("--tag", default="")
 
@@ -98,7 +91,7 @@ class Trainer():
                      args=args)
 
         if args.test_policy or args.load_dir:
-            self.policy.load(os.path.join(args.load_dir + '/model', 'best_model'), load_optimizer=False)
+            self.policy.load(os.path.join(args.load_dir + '/model', 'best_model'), load_optimizer=True)
 
         if args.teacher_student:
             self.teacher_policy = SAC(self.env.teacher_env.obs_shape, 
@@ -115,12 +108,6 @@ class Trainer():
             for param in self.teacher_policy.parameters():
                 param.requires_grad = False
             self.env.set_teacher_policy(self.teacher_policy)
-
-            if self.args.hybrid:
-                self.standing_policy = copy.deepcopy(self.teacher_policy)
-                self.standing_policy.load(os.path.join(args.standing_policy + '/model', 'best_model'), load_optimizer=False)
-                for param in self.standing_policy.parameters():
-                    param.requires_grad = False
         
         
     def setup(self, args):
@@ -142,14 +129,12 @@ class Trainer():
     def env_function(self):
         if self.args.env == 'HumanoidStandup':
             if self.args.teacher_student:
-                if self.args.hybrid:
-                    return HumanoidStandupHybridEnv
                 return HumanoidStandupVelocityEnv
             return HumanoidStandupEnv
         elif self.args.env == "HumanoidDisabledStandup":
+            if self.args.teacher_student:
+                return HumanoidDisabledStandupVelocityEnv
             return HumanoidDisabledStandupEnv
-        elif self.args.env == "HumanoidStanding":
-            return HumanoidStandingEnv
 
     def create_env(self, args):
         env_generator = self.env_function()
@@ -157,9 +142,10 @@ class Trainer():
 
     def train_sac(self):
         store_buf = False if self.args.teacher_student else True
-        state, done = self.env.reset(store_buf=store_buf, test_time=False), False
+        test_time = True if self.args.test_policy else False
+        state, done = self.env.reset(store_buf=store_buf, test_time=test_time), False
         t = 0
-        self.last_power_update = -np.inf
+        self.last_power_update = 0
         self.last_duration = np.inf
         episode_reward = 0
         episode_timesteps = 0
@@ -171,12 +157,9 @@ class Trainer():
 
             # Select action randomly or according to policy
             if self.args.test_policy:
-                if self.args.hybrid and (not self.env.standup_controller):
-                    action = self.standing_policy.select_action(state)
-                else:
-                    action = self.policy.select_action(state)
-            elif (t < self.args.start_timesteps):
-                action = np.clip(2 * np.random.random_sample(size=self.act_dim) - 1, -self.env.power, self.env.power)
+                action = self.policy.select_action(state)
+            elif (t < self.args.start_timesteps and not self.args.load_dir):
+                action = np.clip(2*np.random.random_sample(size=self.act_dim)-1, -self.env.power, self.env.power)
             else:
                 action = self.policy.sample_action(state)
 
@@ -184,15 +167,12 @@ class Trainer():
 
             if self.args.test_policy:
                 image_l = self.env.render()
-                # print(self.env.physics.named.data.qpos)
-                # print(self.env.physics.named.data.qvel)
                 cv2.imshow('image', image_l)
-                cv2.waitKey(4)
+                cv2.waitKey(1)
                 	
 
             episode_timesteps += 1
-            if not self.args.hybrid:
-                self.buf.add(state, action, next_state, reward, self.env.terminal_signal)
+            self.buf.add(state, action, next_state, reward, self.env.terminal_signal)
             state = next_state
             episode_reward += reward
 
@@ -201,14 +181,9 @@ class Trainer():
                 self.policy.train(self.buf, self.args.batch_size)
 
             if done:
-                # if self.env.physics.head_height() > 1.2:
-                #     qpos.append(self.env.physics.data.qpos.copy())
-                #     qvel.append(self.env.physics.data.qvel.copy())
-                # if len(qpos) >= 250:
-                #     print("collection done")
                 self.logger.log_train_episode(t, episode_num, episode_timesteps, episode_reward, self.policy.loss_dict, self.env, self.args)
                 self.policy.reset_record()
-                state, done = self.env.reset(store_buf=store_buf, test_time=False), False
+                state, done = self.env.reset(store_buf=store_buf, test_time=test_time), False
                 episode_reward = 0
                 episode_timesteps = 0
                 episode_num += 1
@@ -224,14 +199,15 @@ class Trainer():
                     self.policy.save(os.path.join(self.model_dir, 'best_model'))
                     best_reward = test_reward
                     self.logger.info("Best model saved")
+                self.policy.save(os.path.join(self.model_dir, 'newest_model'))
                 self.logger.log_test(test_reward, min_test_reward, self.curriculum, self.env.power_base)
             t += 1
 
 
-    def update_power(self, env, criteria, t, threshold=60):
+    def update_power(self, env, criteria, t):
         if not self.curriculum:
             return False
-        if criteria > threshold:
+        if criteria > self.args.threshold:
             env.power_base = max(env.power_end, 0.95 * env.power_base)
             if env.power_base == env.power_end:
                 return False
@@ -249,6 +225,8 @@ class Trainer():
 
 
     def run_tests(self, power_base, test_policy):
+        video_index = [np.random.random_integers(0, self.args.test_iterations - 1)]
+        # video_index = np.arange(self.args.test_iterations)
         np.random.seed(self.args.seed)
         test_env_generator = self.env_function()
         test_env = test_env_generator(self.args, self.args.seed + 10)
@@ -256,8 +234,6 @@ class Trainer():
         if self.args.teacher_student:
             test_env.set_teacher_policy(self.teacher_policy)
         test_reward = []
-        # video_index = [np.random.random_integers(0, self.args.test_iterations - 1)]
-        video_index = np.arange(10)
         speed_profile = np.linspace(self.args.slow_speed, self.args.fast_speed, num=self.args.test_iterations, endpoint=True)
         video_array = []
         for i in range(self.args.test_iterations):
@@ -265,6 +241,7 @@ class Trainer():
             state, done = test_env.reset(test_time=True, speed=speed_profile[i]), False
             episode_timesteps = 0
             episode_reward = 0
+
             while not done:
                 if self.args.hybrid and (not test_env.standup_controller):
                     action = self.standing_policy.select_action(state)
@@ -274,7 +251,22 @@ class Trainer():
                 episode_reward += reward
                 episode_timesteps += 1
                 if i in video_index:
+                    if episode_timesteps == 1:
+                        video = video + list(test_env.starting_images)
                     video.append(test_env.render())
+                
+            
+            if self.args.to_file:
+                test_env.geom_traj["state"] = np.stack(test_env.geom_traj["state"])
+                test_env.teacher_geoms["state"] = np.stack(test_env.teacher_geoms["state"])
+                for name in test_env.geom_names:
+                    test_env.geom_traj[name+"_pos"] = np.stack(test_env.geom_traj[name+"_pos"])
+                    test_env.geom_traj[name+"_angleaxis"] = np.stack(test_env.geom_traj[name+"_angleaxis"])
+                    test_env.teacher_geoms[name+"_pos"] = np.stack(test_env.teacher_geoms[name+"_pos"])
+                    test_env.teacher_geoms[name+"_angleaxis"] = np.stack(test_env.teacher_geoms[name+"_angleaxis"])
+                np.savez(os.path.join(self.buffer_dir, "RecordedMotionSlow{}".format(i)), **test_env.geom_traj)
+                np.savez(os.path.join(self.buffer_dir, "RecordedMotionFast{}".format(i)), **test_env.teacher_geoms)
+
             video_array.append(video)
             test_reward.append(episode_reward)
         test_reward = np.array(test_reward)
