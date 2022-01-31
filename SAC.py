@@ -1,9 +1,9 @@
+import copy
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import copy
-from rlkit_distributions import GaussianMixture
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -88,61 +88,6 @@ class Actor(nn.Module):
         return mu, pi, log_pi, log_std
 
 
-class GMMActor(nn.Module):
-    """MLP actor network."""
-
-    def __init__(self, state_dim, action_dim, log_std_min, log_std_max, n_mixture):
-        super().__init__()
-
-        self.log_std_min = log_std_min
-        self.log_std_max = log_std_max
-        self.n_mixture = n_mixture
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-
-        self.trunk = nn.Sequential(
-            nn.Linear(state_dim, 1024), nn.ReLU(),
-            nn.Linear(1024, 1024), nn.ReLU(),
-        )
-
-        self.mean_std = nn.Linear(1024, 2 * n_mixture * action_dim)
-
-        self.weights = nn.Sequential(
-            nn.Linear(1024, n_mixture),
-            nn.Softmax(dim=-1)
-        )
-
-        self.outputs = dict()
-
-    def forward(self, state, compute_pi=True, compute_log_pi=True):
-
-        power = state[:, -1]
-
-        trunk = self.trunk(state)
-
-        mu, log_std = self.mean_std(trunk).chunk(2, dim=-1)
-        weights = self.weights(trunk).reshape(-1, self.n_mixture, 1)
-
-        log_std = torch.tanh(log_std)
-        log_std = self.log_std_min + 0.5 * (
-                self.log_std_max - self.log_std_min
-        ) * (log_std + 1)
-
-        mu = mu.reshape((-1, self.action_dim, self.n_mixture))
-        std = log_std.exp().reshape((-1, self.action_dim, self.n_mixture))
-        distribution = GaussianMixture(mu, std, weights)
-
-        mu, pi = distribution.rsample()
-
-        if compute_log_pi:
-            log_pi = distribution.log_prob(pi, squash=True, scalar=power)
-        else:
-            log_pi = None
-
-        return power[:, None] * torch.tanh(mu), power[:, None] * torch.tanh(pi), log_pi, log_std
-
-
-
 class Critic(nn.Module):
     """Critic network, employes two q-functions."""
 
@@ -159,7 +104,6 @@ class Critic(nn.Module):
             nn.Linear(1024, 1024), nn.ReLU(),
             nn.Linear(1024, 1)
         )
-
 
     def forward(self, state, action):
         state_action = torch.cat([state, action], dim=1)
@@ -199,10 +143,7 @@ class SAC(nn.Module):
         self.alpha_lr = alpha_lr
         self.alpha_beta = alpha_beta
 
-        if self.args.mixture_actor:
-            self.actor = GMMActor(state_dim, action_dim, actor_log_std_min, actor_log_std_max, n_mixture=4).to(device)
-        else:
-            self.actor = Actor(state_dim, action_dim, actor_log_std_min, actor_log_std_max).to(device)
+        self.actor = Actor(state_dim, action_dim, actor_log_std_min, actor_log_std_max).to(device)
         self.critic = Critic(state_dim, action_dim).to(device)
         self.critic_target = copy.deepcopy(self.critic)
 
@@ -219,22 +160,7 @@ class SAC(nn.Module):
         )
 
         self.reset_alpha()
-
         self.total_it = 0
-
-        if self.args.scheduler:
-            milestones = [100000, 600000, 1000000, 1600000]
-            self.actor_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-                self.actor_optimizer,
-                milestones=milestones,
-                gamma=0.5
-            )
-            self.critic_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-                self.critic_optimizer,
-                milestones=milestones,
-                gamma=0.5
-            )
-
         self.reset_record()
 
     def reset_alpha(self):
@@ -276,7 +202,6 @@ class SAC(nn.Module):
         state, action, next_state, reward, not_done = replay_buffer.sample(
             batch_size)
 
-
         with torch.no_grad():
             _, policy_action, log_pi, _ = self.actor(next_state)
             target_Q1, target_Q2 = self.critic_target(next_state, policy_action)
@@ -290,9 +215,6 @@ class SAC(nn.Module):
         # Optimize the critic
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
-        # if self.args.debug:
-        #     for param in self.critic.parameters():
-        #         self.grad.append(torch.norm(param.grad.detach().cpu().flatten()))
         self.critic_optimizer.step()
 
         if self.total_it % self.policy_freq == 0:
@@ -337,7 +259,6 @@ class SAC(nn.Module):
 
         torch.save(self.log_alpha, filename + "_log_alpha.pt")
         torch.save(self.log_alpha_optimizer.state_dict(), filename + "_log_alpha_optimizer.pt")
-
 
     def load(self, filename, load_optimizer=False):
         self.critic.load_state_dict(torch.load(filename + "_critic.pt"))

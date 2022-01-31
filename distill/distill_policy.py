@@ -1,14 +1,12 @@
-import torch
-import torch.nn as nn
-import numpy as np
 import os
+
 import imageio
-import cv2
+import numpy as np
+import torch
+
 from main import Trainer, ArgParserTrain
 from student_policy import StudentPolicy
 from utils import ReplayBuffer
-from env import HumanoidStandupEnv, HumanoidStandingEnv, HumanoidStandupVelocityEnv, HumanoidStandupHybridEnv, HumanoidStandupVelocityDistillEnv
-
 
 
 def main():
@@ -19,6 +17,7 @@ def main():
     else:
         trainer.distill_policy()
 
+
 class ArgParserDistill(ArgParserTrain):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -26,6 +25,7 @@ class ArgParserDistill(ArgParserTrain):
         self.add_argument('--distill_dir', default=None, type=str)
         self.add_argument('--load_buffer', default=None, type=str)
         self.add_argument('--save_buffer', default=False, action='store_true')
+
 
 class DistillTrainer(Trainer):
     def __init__(self, args):
@@ -39,7 +39,7 @@ class DistillTrainer(Trainer):
             self.env.teacher_env.action_space.shape[0],
             self.args
         )
-        
+
     def env_function(self):
         return HumanoidStandupVelocityDistillEnv
 
@@ -51,7 +51,8 @@ class DistillTrainer(Trainer):
         return np.concatenate(state)
 
     def test_distill(self):
-        self.student_policy.trunk.load_state_dict(torch.load(os.path.join(self.args.distill_dir + '/model', 'best_model_policy.pt')))
+        self.student_policy.trunk.load_state_dict(
+            torch.load(os.path.join(self.args.distill_dir + '/model', 'best_model_policy.pt')))
         test_reward, min_test_reward, video = self.run_tests(self.env.power_base, self.student_policy)
         print("Average Test Reward: {:.4f}".format(test_reward))
         for i, v in enumerate(video):
@@ -59,7 +60,7 @@ class DistillTrainer(Trainer):
                 imageio.mimsave(os.path.join(self.video_dir, 'step_{}.mp4'.format(i)), v, fps=30)
 
     def distill_policy(self):
-        
+
         collect_policy = self.policy
         best_reward_overall = -np.inf
         for iteration in range(80):
@@ -72,7 +73,7 @@ class DistillTrainer(Trainer):
 
             self.logger.log_data_collection(iteration)
 
-            tuples = 40000 if iteration==0 else 10000
+            tuples = 40000 if iteration == 0 else 10000
 
             if not (self.args.load_buffer and iteration == 0):
                 for t in range(tuples):
@@ -83,7 +84,7 @@ class DistillTrainer(Trainer):
                     with torch.no_grad():
                         action = collect_policy.select_action(current_state)
                         expert_action = self.policy.select_action(self.env.teacher_state)
-                        next_state, reward, done, extra = self.env.step(a=action, supply_target=(iteration!=0))
+                        next_state, reward, done, extra = self.env.step(a=action, supply_target=(iteration != 0))
                         pd_residual = expert_action + extra["pd_base"] - extra["current_pose"]
                         episode_timesteps += 1
                         self.buf.add(state, pd_residual, next_state, reward, self.env.terminal_signal)
@@ -104,8 +105,6 @@ class DistillTrainer(Trainer):
                     self.buf.save(os.path.join(self.buffer_dir, "distill_data"))
 
                 self.logger.log_policy_training(iteration)
-            
-
 
             gradient_updates = 40000 if iteration == 0 else 10000
 
@@ -115,9 +114,9 @@ class DistillTrainer(Trainer):
                     test_reward, _, video = self.run_tests(self.env.power_base, self.student_policy)
                     self.logger.info("Train Iteration: {}, MSELoss: {:.4f}, Test Reward: {:.4f}".format(
                         iteration, np.array(self.student_policy.loss_dict["action"]).mean(), test_reward)
-                        )
+                    )
                     self.student_policy.reset_record()
-                    
+
                     if (test_reward > best_reward):
                         best_state_dict = self.student_policy.state_dict()
                         if (test_reward > best_reward_overall):
@@ -126,10 +125,12 @@ class DistillTrainer(Trainer):
                             best_reward_overall = test_reward
                             self.logger.info("Best model saved")
                         best_reward = test_reward
-                        
+
                     for i, v in enumerate(video):
                         if len(v) != 0:
-                            imageio.mimsave(os.path.join(self.video_dir, 'iteration_{}_step_{}_{}.mp4'.format(iteration, j+1, i)), v, fps=30)
+                            imageio.mimsave(
+                                os.path.join(self.video_dir, 'iteration_{}_step_{}_{}.mp4'.format(iteration, j + 1, i)),
+                                v, fps=30)
 
             collect_policy = self.student_policy
             # self.student_policy.load_state_dict(best_state_dict)

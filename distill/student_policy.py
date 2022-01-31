@@ -1,8 +1,9 @@
+import copy
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import copy
 from rlkit_distributions import GaussianMixture
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -44,7 +45,6 @@ class StudentPolicy(nn.Module):
     def forward(self, state):
         return self.trunk(state)
 
-    
     def select_action(self, state):
         self.trunk.eval()
         state = torch.FloatTensor(state.reshape(1, -1)).to(device)

@@ -6,7 +6,7 @@ import logging
 from scipy import interpolate
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
-        
+
 
 class ReplayBuffer(object):
     def __init__(self, state_dim, action_dim, args, max_size=int(1e6)):
@@ -35,7 +35,7 @@ class ReplayBuffer(object):
 
     def sample(self, batch_size):
         ind = np.random.randint(0, self.size, size=batch_size)
-            
+
         return (
             torch.FloatTensor(self.state[ind]).to(self.device),
             torch.FloatTensor(self.action[ind]).to(self.device),
@@ -43,7 +43,7 @@ class ReplayBuffer(object):
             torch.FloatTensor(self.reward[ind]).to(self.device),
             torch.FloatTensor(self.not_done[ind]).to(self.device),
         )
-    
+
     def save(self, filename):
         print("Got here")
         data = {
@@ -68,12 +68,14 @@ class ReplayBuffer(object):
         self.ptr = data['ptr']
         self.size = data['size']
 
+
 def make_dir(dir_path):
     try:
         os.mkdir(dir_path)
     except OSError:
         pass
     return dir_path
+
 
 class RLLogger(object):
 
@@ -119,21 +121,22 @@ class RLLogger(object):
     def log_test(self, test_reward, min_test_reward, curriculum, power):
         self.logger.info("-------------------------------------------------")
         self.logger.info("Evaluation over 10 episodes: {:.3f}, minimum reward: {:.3f}, Curriculum: {}". \
-                    format(test_reward, min_test_reward, curriculum))
+                         format(test_reward, min_test_reward, curriculum))
         self.logger.info("-------------------------------------------------")
         self.logger.info("Current power: {:.3f}".format(power))
 
     def log_data_collection(self, iteration):
         self.logger.info("-------------------------------------------------")
         self.logger.info("Starting #{} data collection procedure". \
-                    format(iteration))
+                         format(iteration))
         self.logger.info("-------------------------------------------------")
-    
+
     def log_policy_training(self, iteration):
         self.logger.info("-------------------------------------------------")
         self.logger.info("Starting #{} policy training procedure". \
-                    format(iteration))
+                         format(iteration))
         self.logger.info("-------------------------------------------------")
+
 
 def randomize_limited_and_rotational_joints(physics, k=0.1):
     random = np.random
@@ -155,22 +158,26 @@ def randomize_limited_and_rotational_joints(physics, k=0.1):
             if joint_type == hinge or joint_type == slide:
                 qpos[joint_name] = random.uniform(k * range_min, k * range_max)
 
+
 def quaternion_multiply(quaternion1, quaternion2):
     a1, b1, c1, d1 = quaternion1
     a2, b2, c2, d2 = quaternion2
     return [a1 * a2 - b1 * b2 - c1 * c2 - d1 * d2,
-                     a1 * b2 + b1 * a2 + c1 * d2 - d1 * c2,
-                     a1 * c2 - b1 * d2 + c1 * a2 + d1 * b2,
-                     a1 * d2 + b1 * c2 - c1 * b2 + d1 * a2]
+            a1 * b2 + b1 * a2 + c1 * d2 - d1 * c2,
+            a1 * c2 - b1 * d2 + c1 * a2 + d1 * b2,
+            a1 * d2 + b1 * c2 - c1 * b2 + d1 * a2]
+
 
 def rotmatrix_to_quat(mat):
     return R.from_matrix(mat).as_quat()
+
 
 def rotmatrix_to_angleaxis(mat):
     ep = 1e-12
     s = R.from_matrix(mat).as_rotvec()
     degrees = np.linalg.norm(s)
-    return np.array([degrees * 180 / np.pi, s[0]/(degrees+ep), s[1]/(degrees+ep), s[2]/(degrees+ep)])
+    return np.array([degrees * 180 / np.pi, s[0] / (degrees + ep), s[1] / (degrees + ep), s[2] / (degrees + ep)])
+
 
 def interpolate_motion(data, interpolation_coeff=0.25, uneven=False):
     com_dist = data["com"].copy()
@@ -182,44 +189,40 @@ def interpolate_motion(data, interpolation_coeff=0.25, uneven=False):
     timestamp_ori = np.linspace(0, l, num=l, endpoint=True)
     if uneven:
         cut_off = l - 12
-        timestamp_part1 = np.linspace(0, cut_off, num=math.ceil(cut_off/0.05), endpoint=False)
-        timestamp_part2 = np.linspace(cut_off, l, num=math.ceil((l-cut_off)/interpolation_coeff), endpoint=True)
+        timestamp_part1 = np.linspace(0, cut_off, num=math.ceil(cut_off / 0.05), endpoint=False)
+        timestamp_part2 = np.linspace(cut_off, l, num=math.ceil((l - cut_off) / interpolation_coeff), endpoint=True)
         timestamp_new = np.concatenate((timestamp_part1, timestamp_part2))
     else:
-        timestamp_new = np.linspace(0, l, num=math.ceil(l/interpolation_coeff), endpoint=True)
+        timestamp_new = np.linspace(0, l, num=math.ceil(l / interpolation_coeff), endpoint=True)
 
     com_ori_new = []
     for j in range(com_ori.shape[1]):
-        curve = interpolate.splrep(timestamp_ori, com_ori[:,j])
+        curve = interpolate.splrep(timestamp_ori, com_ori[:, j])
         com_ori_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None])
-    
+
     qpos_new = []
     for j in range(qpos.shape[1]):
-        curve = interpolate.splrep(timestamp_ori, qpos[:,j])
+        curve = interpolate.splrep(timestamp_ori, qpos[:, j])
         qpos_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None])
 
     qvel_new = []
     for j in range(qvel.shape[1]):
-        curve = interpolate.splrep(timestamp_ori, qvel[:,j])
+        curve = interpolate.splrep(timestamp_ori, qvel[:, j])
         qvel_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None] * interpolation_coeff)
 
     com_new = []
     for j in range(com_dist.shape[1]):
-        curve = interpolate.splrep(timestamp_ori, com_dist[:,j])
+        curve = interpolate.splrep(timestamp_ori, com_dist[:, j])
         com_new.append(interpolate.splev(timestamp_new, curve, der=0)[:, None])
 
     interpolated_data = {
         "com": np.concatenate(com_new, axis=1),
-        "qpos": np.concatenate(qpos_new, axis = 1),
+        "qpos": np.concatenate(qpos_new, axis=1),
         "qvel": np.concatenate(qvel_new, axis=1),
         "com_ori": np.concatenate(com_ori_new, axis=1)
     }
 
     return interpolated_data
-
-
-
-
 
 
 if __name__ == "__main__":
