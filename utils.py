@@ -95,7 +95,7 @@ class RLLogger(object):
     def log_start(self, argv, args):
         self.logger.info(str(argv))
         self.logger.info("---------------------------------------")
-        self.logger.info(f"Policy: {args.policy}, Env: {args.env}, Seed: {args.seed}")
+        self.logger.info(f"Env: {args.env}, Seed: {args.seed}, imitation: {args.teacher_student}")
         self.logger.info("---------------------------------------")
 
     def log_train_episode(self, t, episode_num, episode_timesteps, episode_reward, loss_dict, env, args):

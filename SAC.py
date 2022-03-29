@@ -239,10 +239,6 @@ class SAC(nn.Module):
             for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
                 target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        if self.args.scheduler:
-            self.actor_scheduler.step()
-            self.critic_scheduler.step()
-
         self.loss_dict["critic"].append(critic_loss.item())
         if self.total_it % self.policy_freq == 0:
             self.loss_dict["actor"].append(actor_loss.item())

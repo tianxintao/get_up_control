@@ -9,7 +9,6 @@ import cv2
 import imageio
 import numpy as np
 import torch
-from PPO import PPO
 
 import utils
 from SAC import SAC

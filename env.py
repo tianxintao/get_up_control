@@ -258,7 +258,7 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
                     [np.append([0, 0, 1.5, 0, 0, 0, 0], self.standing_pose)],
                     axis=0)
                 self.interpolated_trajectory["com"] = np.append(self.interpolated_trajectory["com"],
-                                                                [[0, 0, _STAND_HEIGHT]], axis=0)
+                                                                [[0, 0, 1.4]], axis=0)
                 self.interpolated_trajectory["com_ori"] = np.append(self.interpolated_trajectory["com_ori"],
                                                                     [[0, 0, 1.0]], axis=0)
                 with self.physics.reset_context():
