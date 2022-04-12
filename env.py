@@ -149,8 +149,8 @@ class HumanoidStandupEnv():
         torque_penalty = rewards.tolerance(self.physics.control(), margin=1,
                                            value_at_margin=0,
                                            sigmoid='quadratic').mean()
-        return self._upright * self._standing * self._dont_move * self._closer_feet * ((torque_penalty + 3) / 4)
 
+        return self._upright * self._standing * self._dont_move * self._closer_feet * ((torque_penalty + self.args.penalty) / (self.args.penalty+1))
 
 class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
     qpos_to_ctrl_index = np.array([1, 0, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 12, 14, 13, 15, 16, 17, 18, 19, 20])

@@ -33,6 +33,7 @@ class ArgParserTrain(argparse.ArgumentParser):
         self.add_argument("--seed", default=0, type=int)
         self.add_argument("--power", default=1.0, type=float)
         self.add_argument("--power_end", default=0.4, type=float)
+        self.add_argument("--penalty", default=3.0, type=float)
         self.add_argument("--slow_speed", default=0.2, type=float)
         self.add_argument("--fast_speed", default=0.8, type=float)
         self.add_argument("--threshold", default=60, type=float)
@@ -208,17 +209,18 @@ class Trainer():
             return False
         if criteria > self.args.threshold:
             env.power_base = max(env.power_end, 0.95 * env.power_base)
-            if env.power_base == env.power_end:
+            self.args.penalty = max(self.args.penalty * 0.5, 0.25)
+            if self.args.penalty == 0.25:
                 return False
             self.last_duration = t - self.last_power_update
             self.last_power_update = t
 
-        else:
-            current_stage_length = t - self.last_power_update
-            if current_stage_length > min(1000000, max(300000, 1.5 * self.last_duration)) and env.power_base < 1.0:
-                env.power_base = env.power_base / 0.95
-                env.power_end = env.power_base
-                return False
+        # else:
+        #     current_stage_length = t - self.last_power_update
+        #     if current_stage_length > min(1000000, max(300000, 1.5 * self.last_duration)) and env.power_base < 1.0:
+        #         env.power_base = env.power_base / 0.95
+        #         env.power_end = env.power_base
+        #         return False
 
         return True
 
