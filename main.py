@@ -1,5 +1,4 @@
 import argparse
-import copy
 import json
 import os
 import sys
@@ -12,8 +11,9 @@ import torch
 
 import utils
 from SAC import SAC
-from env import HumanoidStandupEnv, HumanoidStandupVelocityEnv, HumanoidVariantStandupEnv, HumanoidVariantStandupVelocityEnv
-from utils import RLLogger, ReplayBuffer, quaternion_multiply
+from env import HumanoidStandupEnv, HumanoidStandupVelocityEnv, HumanoidVariantStandupEnv, \
+    HumanoidVariantStandupVelocityEnv
+from utils import RLLogger, ReplayBuffer, organize_args
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.set_printoptions(precision=5, suppress=True)
@@ -22,28 +22,27 @@ np.set_printoptions(precision=5, suppress=True)
 class ArgParserTrain(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument('--env', type=str, default='HumanoidStandup', choices=['HumanoidStandup', 'HumanoidVariantStandup'])
+        self.add_argument('--env', type=str, default='HumanoidStandup',
+                          choices=['HumanoidStandup', 'HumanoidVariantStandup'])
         self.add_argument('--variant', type=str, default='', choices=['Disabled', 'Noarm'])
         self.add_argument('--test_policy', default=False, action='store_true')
         self.add_argument('--teacher_student', default=False, action='store_true')
         self.add_argument('--to_file', default=False, action='store_true')
-        self.add_argument('--hybrid', default=False, action='store_true')
         self.add_argument("--teacher_power", default=0.4, type=float)
         self.add_argument("--teacher_dir", default=None, type=str)
         self.add_argument("--seed", default=0, type=int)
         self.add_argument("--power", default=1.0, type=float)
+        self.add_argument("--curr_power", default=1.0, type=float)
         self.add_argument("--power_end", default=0.4, type=float)
         self.add_argument("--slow_speed", default=0.2, type=float)
         self.add_argument("--fast_speed", default=0.8, type=float)
+        self.add_argument("--target_speed", default=0.5, type=float, help="Target speed is used to test the weaker policy")
         self.add_argument("--threshold", default=60, type=float)
         self.add_argument('--max_timesteps', type=int, default=10000000, help='Number of simulation steps to run')
         self.add_argument('--test_interval', type=int, default=20000, help='Number of simulation steps between tests')
-        self.add_argument('--test_iterations', type=int, default=10, help='Number of simulation steps between tests')
-        self.add_argument('--replay_buffer_size', type=int, default=1e6, help='Number of simulation steps to run')
-        self.add_argument('--gamma', type=float, default=0.999, help='discount factor')
-        self.add_argument('--max_ep_len', type=int, default=1000)
+        self.add_argument('--test_iterations', type=int, default=10, help='Number of test episodes')
+        self.add_argument('--replay_buffer_size', type=int, default=1e6, help='Capacity of the replay buffer')
         self.add_argument('--avg_reward', default=False, action='store_true')
-        self.add_argument("--imitation_data", default='./data/imitation_data_sample.npz', type=str)
         self.add_argument("--work_dir", default='./experiment/')
         self.add_argument("--load_dir", default=None, type=str)
         # SAC hyperparameters
@@ -68,6 +67,7 @@ def main():
 
 class Trainer():
     def __init__(self, args):
+        args = organize_args(args)
         self.args = args
         self.setup(args)
         self.logger.log_start(sys.argv, args)
@@ -92,7 +92,7 @@ class Trainer():
                           args=args)
 
         if args.test_policy or args.load_dir:
-            self.policy.load(os.path.join(args.load_dir + '/model', 'best_model'), load_optimizer=True)
+            self.policy.load(os.path.join(args.load_dir + '/model', 'best_model'), load_optimizer=False)
 
         if args.teacher_student:
             self.teacher_policy = SAC(self.env.teacher_env.obs_shape,
@@ -115,15 +115,18 @@ class Trainer():
         ts = time.strftime("%m-%d-%H-%M", ts)
         exp_name = args.env + '_' + ts + '_' + 'seed_' + str(args.seed)
         exp_name = exp_name + '_' + args.tag if args.tag != '' else exp_name
-        experiment_dir = os.path.join(args.work_dir, exp_name)
+        self.experiment_dir = os.path.join(args.work_dir, exp_name)
 
-        utils.make_dir(experiment_dir)
-        self.video_dir = utils.make_dir(os.path.join(experiment_dir, 'video'))
-        self.model_dir = utils.make_dir(os.path.join(experiment_dir, 'model'))
-        self.buffer_dir = utils.make_dir(os.path.join(experiment_dir, 'buffer'))
-        self.logger = RLLogger(experiment_dir)
+        utils.make_dir(self.experiment_dir)
+        self.video_dir = utils.make_dir(os.path.join(self.experiment_dir, 'video'))
+        self.model_dir = utils.make_dir(os.path.join(self.experiment_dir, 'model'))
+        self.buffer_dir = utils.make_dir(os.path.join(self.experiment_dir, 'buffer'))
+        self.logger = RLLogger(self.experiment_dir)
 
-        with open(os.path.join(experiment_dir, 'args.json'), 'w') as f:
+        self.save_args(args)
+
+    def save_args(self, args):
+        with open(os.path.join(self.experiment_dir, 'args.json'), 'w') as f:
             json.dump(vars(args), f, sort_keys=True, indent=4)
 
     def env_function(self):
@@ -208,6 +211,8 @@ class Trainer():
             return False
         if criteria > self.args.threshold:
             env.power_base = max(env.power_end, 0.95 * env.power_base)
+            self.args.curr_power = env.power_base
+            self.save_args(self.args)
             if env.power_base == env.power_end:
                 return False
             self.last_duration = t - self.last_power_update
@@ -217,14 +222,16 @@ class Trainer():
             current_stage_length = t - self.last_power_update
             if current_stage_length > min(1000000, max(300000, 1.5 * self.last_duration)) and env.power_base < 1.0:
                 env.power_base = env.power_base / 0.95
+                self.args.curr_power = env.power_base
+                self.save_args(self.args)
                 env.power_end = env.power_base
                 return False
 
         return True
 
     def run_tests(self, power_base, test_policy):
-        # video_index = [np.random.random_integers(0, self.args.test_iterations - 1)]
-        video_index = np.arange(self.args.test_iterations)
+        video_index = [np.random.random_integers(0, self.args.test_iterations - 1)]
+        # video_index = np.arange(self.args.test_iterations)
         np.random.seed(self.args.seed)
         test_env_generator = self.env_function()
         test_env = test_env_generator(self.args, self.args.seed + 10)
@@ -242,10 +249,7 @@ class Trainer():
             episode_reward = 0
 
             while not done:
-                if self.args.hybrid and (not test_env.standup_controller):
-                    action = self.standing_policy.select_action(state)
-                else:
-                    action = test_policy.select_action(state)
+                action = test_policy.select_action(state)
                 state, reward, done, _ = test_env.step(action, test_time=True)
                 episode_reward += reward
                 episode_timesteps += 1

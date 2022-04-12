@@ -1,6 +1,6 @@
 # Learning to Get Up
 
-This repository contains code for the SIGGRAPH 2022 paper ***Learning to Get Up***. <br /> 
+This repository contains code for the SIGGRAPH 2022 submission ***Learning to Get Up***. <br /> 
 ![image](./figs/papers_149s3.jpg)
 
 ### Abstract:
@@ -11,7 +11,7 @@ Getting up from an arbitrary fallen state is a basic human skill. Existing metho
 ## Usage of the code
 
 ### Install the dependencies
-To install the python dependencies, you can create a new virtual environment than install the necessary packages:
+To install the python dependencies, you can create a new virtual environment then install the necessary packages:
 
 ```python
 python3 -m venv python_env
@@ -26,38 +26,36 @@ This setup is tested on *Ubuntu 18.04* with *Python 3.8*
 ---
 ### Test
 
-There is a pretrained model saved under `experiments/pretrained_model`
+There is a pretrained model saved under `experiment/pretrained_model`. The *WEAK* policy is stored under `experiment/pretrained/teacher` while the final *SLOW* policy is stored under `experiment/pretrained/student`.
 
-To reproduce the results shown in the paper, you can run the following command:
+To reproduce the get-up motions at different speeds shown in the paper, you can run the following command:
 ```python
-python3 test.py --load_dir experiments/pretrained_model --target_style proud --input_motion data/xia_test/neutral_01_000.bvh --input_content walk --input_style neutral --no_pos
+python3 main.py --teacher_student --teacher_dir experiment/pretrained/teacher --load_dir experiment/pretrained/student --test_policy --target_speed 0.5
 ```
+This command will generate a new folder under the `experiment`
+
+`--target_speed` is to specify the desire speed for the get-up motion, the pretrained controller can take value form `[0.2, 0.8]`.
+
+`--to_file` is to save the rotation of the joints as `.npy` files.
 
 ---
 ### Training
 
-You need to download the complete dataset from the link shown above to train the models.
-
-To train the *Style-ERD* model, you can run the following command:
+To train the *WEAK* policy, you can run the following command:
 ```python
-python3 train.py --perceptual_loss --no_pos --dis_lr 5e-5 --w_reg 128 --n_epoch 2000 --tag train_Style_ERD
+python3 main.py --power 1.0 --power_end 0.4 --discount 0.97 --actor_lr 1e-5
 ```
 
-To train the content-classification network used by the content supervision module, you can run:
+To train the *SLOW* policy after the *WEAK* policy, you can run:
 ```python
-python3 train.py --train_classifier --n_epoch 1000
+python3 main.py --teacher_student --teacher_dir PATH_TO_TEACHER_POLICY --discount 0.95 --actor_lr 1e-5 --fast_speed 0.8 --slow_speed 0.2
 ```
-Then you need to move the best model to `data` and name the saved model as `classifier.pt`
 
 ---
 ### Acknowlegements
 
-The code builds upon from the following publications:
-1. [A Deep Learning Framework For Character Motion Synthesis and Editing](https://theorangeduck.com/page/deep-learning-framework-character-motion-synthesis-and-editing)
-2. [Unpaired Motion Style Transfer from Video to Animation](https://deepmotionediting.github.io/style_transfer)
+The code builds upon the following work:
+1. [Soft Actor-Critic (SAC) implementation in PyTorch](https://github.com/denisyarats/pytorch_sac)
+2. [dm_control: DeepMind Infrastructure for Physics-Based Simulation](https://github.com/deepmind/dm_control)
 
-The dataset is provided by:
-1. [Realtime style transfer for unlabeled heterogeneous human motion](http://graphics.cs.cmu.edu/?p=1462)
-2. [Mixamo](https://www.mixamo.com/#/)
-   
 ---

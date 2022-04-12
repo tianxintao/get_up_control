@@ -1,11 +1,12 @@
-import torch
-import numpy as np
-import os
-import math
+import json
 import logging
+import math
+import os
+
+import numpy as np
+import torch
 from scipy import interpolate
 from scipy.spatial.transform import Rotation as R
-from scipy.spatial.transform import Slerp
 
 
 class ReplayBuffer(object):
@@ -178,6 +179,18 @@ def rotmatrix_to_angleaxis(mat):
     degrees = np.linalg.norm(s)
     return np.array([degrees * 180 / np.pi, s[0] / (degrees + ep), s[1] / (degrees + ep), s[2] / (degrees + ep)])
 
+def organize_args(args):
+    args.curr_power = args.power
+    if args.teacher_student:
+        args.power = 1.0
+        args.power_end = 1.0
+        with open(os.path.join(args.teacher_dir, 'args.json'), 'r') as f:
+            teacher_args = json.load(f)
+        args.teacher_power = teacher_args["curr_power"]
+        if args.test_policy:
+            args.fast_speed = args.target_speed
+            args.slow_speed = args.target_speed
+    return args
 
 def interpolate_motion(data, interpolation_coeff=0.25, uneven=False):
     com_dist = data["com"].copy()
@@ -226,4 +239,4 @@ def interpolate_motion(data, interpolation_coeff=0.25, uneven=False):
 
 
 if __name__ == "__main__":
-    interpolate_motion('./data/trajectory3d_52_collected.npz')
+    print("done")
