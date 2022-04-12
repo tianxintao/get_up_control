@@ -7,9 +7,9 @@ from dm_control.utils import rewards
 import utils
 
 STANDING_POSE_NOARM = [0, -0.11665, 0, -0.03601, -0.03219, 0.05025,
-                          -0.39803, -0.30198, 0.13615, -0.03601, -0.03219, 0.05025,
-                          -0.39803, -0.30198, -0.13615,
-                          -0.40763, 0.41967, -1.5795]
+                       -0.39803, -0.30198, 0.13615, -0.03601, -0.03219, 0.05025,
+                       -0.39803, -0.30198, -0.13615,
+                       -0.40763, 0.41967, -1.5795]
 STANDING_POSE_DISABLED = [0, -0.11665, 0, -0.03601, -0.03219, 0.05025,
                           -0.39803, -0.30198, 0.13615, -0.03601, -0.03219, 0.05025,
                           -0.30198, -0.13615, 0.40763, -0.41967,
@@ -143,7 +143,13 @@ class HumanoidStandupEnv():
 
     @property
     def _reward(self):
-        return self._upright * self._standing * self._dont_move * self._closer_feet
+        velocity_penalty = rewards.tolerance(self.physics.velocity(), margin=5,
+                                             value_at_margin=0,
+                                             sigmoid='quadratic').mean()
+        torque_penalty = rewards.tolerance(self.physics.control(), margin=1,
+                                           value_at_margin=0,
+                                           sigmoid='quadratic').mean()
+        return self._upright * self._standing * self._dont_move * self._closer_feet * ((torque_penalty + 3) / 4)
 
 
 class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
