@@ -43,13 +43,14 @@ This command will generate a new folder under the `experiment`
 
 To train the *WEAK* policy, you can run the following command:
 ```python
-python3 main.py --power 1.0 --power_end 0.4 --discount 0.97 --actor_lr 1e-5
+python3 main.py --power 1.0 --power_end 0.4 --discount 0.97 --actor_lr 1e-5  --env HumanoidStandup
 ```
 
 To train the *SLOW* policy after the *WEAK* policy, you can run:
 ```python
-python3 main.py --teacher_student --teacher_dir PATH_TO_TEACHER_POLICY --discount 0.95 --actor_lr 1e-5 --fast_speed 0.8 --slow_speed 0.2
+python3 main.py --teacher_student --teacher_dir PATH_TO_TEACHER_POLICY --discount 0.95 --actor_lr 1e-5 --fast_speed 0.8 --slow_speed 0.2  --env HumanoidStandup
 ```
+To try other variants of the humanoid model, replace `--env HumanoidStandup` with `--env HumanoidVariantStandup --variant Disabled` for the one with an arm and a leg in a cast, and `--env HumanoidVariantStandup --variant Noarm` for the one with one missing arm.
 
 ---
 ### Acknowlegements
