@@ -6,6 +6,10 @@ from dm_control.utils import rewards
 
 import utils
 
+STANDING_POSE_NOARM = [0, -0.11665, 0, -0.03601, -0.03219, 0.05025,
+                          -0.39803, -0.30198, 0.13615, -0.03601, -0.03219, 0.05025,
+                          -0.39803, -0.30198, -0.13615,
+                          -0.40763, 0.41967, -1.5795]
 STANDING_POSE_DISABLED = [0, -0.11665, 0, -0.03601, -0.03219, 0.05025,
                           -0.39803, -0.30198, 0.13615, -0.03601, -0.03219, 0.05025,
                           -0.30198, -0.13615, 0.40763, -0.41967,
@@ -251,8 +255,8 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
                 if self.args.to_file: self.geom_traj = copy.deepcopy(self.starting_geoms)
                 self.interpolated_trajectory = utils.interpolate_motion(self.teacher_traj, self.speed, uneven=False)
                 self.teacher_episode_length = self.interpolated_trajectory["qpos"].shape[0]
-                if not test_time and np.random.uniform(0, 1) > 0.2: self._step_num = np.random.randint(0,
-                                                                                                       self.teacher_episode_length)
+                if not test_time and np.random.uniform(0, 1) > 0.2:
+                    self._step_num = np.random.randint(0, self.teacher_episode_length)
                 self.interpolated_trajectory["qpos"] = np.append(
                     self.interpolated_trajectory["qpos"],
                     [np.append([0, 0, 1.5, 0, 0, 0, 0], self.standing_pose)],
@@ -385,29 +389,40 @@ class HumanoidStandupVelocityEnv(HumanoidStandupEnv):
         return np.concatenate((image_l, image_m, image_r), axis=1)
 
 
-class HumanoidDisabledStandupEnv(HumanoidStandupEnv):
+class HumanoidVariantStandupEnv(HumanoidStandupEnv):
 
     def __init__(self, args, seed):
         super().__init__(args, seed)
-        self.physics.reload_from_xml_path('data/humanoid_disabled.xml')
-        self.obs_shape -= 4
-        self.action_space -= 2
+        if args.variant == "Disabled":
+            self.physics.reload_from_xml_path('data/humanoid_disabled.xml')
+            self.obs_shape -= 4
+            self.action_space -= 2
+        elif args.variant == "Noarm":
+            self.physics.reload_from_xml_path('data/humanoid_noarm.xml')
+            self.obs_shape -= 6
+            self.action_space -= 3
 
 
-class HumanoidDisabledStandupVelocityEnv(HumanoidStandupVelocityEnv, HumanoidDisabledStandupEnv):
-    qpos_to_ctrl_index = np.array([1, 0, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 13, 12, 14, 15, 16, 17, 18])
-    standing_pose = STANDING_POSE_DISABLED
-    state_length = 63
+class HumanoidVariantStandupVelocityEnv(HumanoidStandupVelocityEnv, HumanoidVariantStandupEnv):
 
     def __init__(self, args, seed):
         self.args = args
         self.teacher_policy = None
         if args.teacher_student:
-            self.teacher_env = HumanoidDisabledStandupEnv(args, seed)
-            self.render_env = HumanoidDisabledStandupEnv(args, seed + 10)
+            self.teacher_env = HumanoidVariantStandupEnv(args, seed)
+            self.render_env = HumanoidVariantStandupEnv(args, seed + 10)
             self.teacher_policy = None
-        HumanoidDisabledStandupEnv.__init__(self, args, seed)
-        self.physics.reload_from_xml_path('data/humanoid_disabled_high_freq.xml')
+        HumanoidVariantStandupEnv.__init__(self, args, seed)
+        if args.variant == "Disabled":
+            self.physics.reload_from_xml_path('data/humanoid_disabled_high_freq.xml')
+            self.qpos_to_ctrl_index = np.array([1, 0, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 13, 12, 14, 15, 16, 17, 18])
+            self.standing_pose = STANDING_POSE_DISABLED
+            self.state_length = 63
+        elif args.variant == "Noarm":
+            self.physics.reload_from_xml_path('data/humanoid_noarm_high_freq.xml')
+            self.qpos_to_ctrl_index = np.array([1, 0, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 12, 14, 13, 15, 16, 17])
+            self.standing_pose = STANDING_POSE_NOARM
+            self.state_length = 61
 
     def set_teacher_policy(self, policy):
         HumanoidStandupVelocityEnv.set_teacher_policy(self, policy)
