@@ -12,8 +12,7 @@ import torch
 
 import utils
 from SAC import SAC
-from env import HumanoidStandupEnv, HumanoidStandupVelocityEnv, HumanoidDisabledStandupEnv, \
-    HumanoidDisabledStandupVelocityEnv
+from env import HumanoidStandupEnv, HumanoidStandupVelocityEnv, HumanoidVariantStandupEnv, HumanoidVariantStandupVelocityEnv
 from utils import RLLogger, ReplayBuffer, quaternion_multiply
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -23,9 +22,8 @@ np.set_printoptions(precision=5, suppress=True)
 class ArgParserTrain(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument('--env', type=str, default='HumanoidStandup',
-                          choices=['HumanoidStandup', 'HumanoidStanding', 'HumanoidDisabledStandup',
-                                   'HumanoidElbowStanding'])
+        self.add_argument('--env', type=str, default='HumanoidStandup', choices=['HumanoidStandup', 'HumanoidVariantStandup'])
+        self.add_argument('--variant', type=str, default='', choices=['Disabled', 'Noarm'])
         self.add_argument('--test_policy', default=False, action='store_true')
         self.add_argument('--teacher_student', default=False, action='store_true')
         self.add_argument('--to_file', default=False, action='store_true')
@@ -133,10 +131,10 @@ class Trainer():
             if self.args.teacher_student:
                 return HumanoidStandupVelocityEnv
             return HumanoidStandupEnv
-        elif self.args.env == "HumanoidDisabledStandup":
+        elif self.args.env == "HumanoidVariantStandup":
             if self.args.teacher_student:
-                return HumanoidDisabledStandupVelocityEnv
-            return HumanoidDisabledStandupEnv
+                return HumanoidVariantStandupVelocityEnv
+            return HumanoidVariantStandupEnv
 
     def create_env(self, args):
         env_generator = self.env_function()
@@ -225,8 +223,8 @@ class Trainer():
         return True
 
     def run_tests(self, power_base, test_policy):
-        video_index = [np.random.random_integers(0, self.args.test_iterations - 1)]
-        # video_index = np.arange(self.args.test_iterations)
+        # video_index = [np.random.random_integers(0, self.args.test_iterations - 1)]
+        video_index = np.arange(self.args.test_iterations)
         np.random.seed(self.args.seed)
         test_env_generator = self.env_function()
         test_env = test_env_generator(self.args, self.args.seed + 10)
