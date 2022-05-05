@@ -6,6 +6,9 @@ Getting up from an arbitrary fallen state is a basic human skill. Existing metho
 
 ## Supplementary Video
 
+<iframe src="https://drive.google.com/file/d/13niIZdHDBJGKGetYNBxw4wYf_M3J7t0n/preview" width="640" height="480" allow="autoplay"></iframe>
+
+<iframe src="https://drive.google.com/file/d/1Z4nSLxqnGSPbyDYNv2EI97FBPV6_xsVM/preview" width="640" height="480" allow="autoplay"></iframe>
 
 ## Bibtex
 
